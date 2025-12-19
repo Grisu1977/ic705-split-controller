@@ -32,7 +32,7 @@ class CIV_Control:
             self.baud_rate = int(config['Transceiver']['Baud_Rate'])
             self.trx_Adresse = int(config['Transceiver']['TRX_Adresse'],16)
             self.offset = int(config['Offset']['Last_Offset'])
-            self.step = int(config['Offset']['Last_Step'])
+            self.step = config['Offset']['Last_Step']
 
     def config_schreiben(self):
         config = configparser.ConfigParser()
@@ -116,7 +116,7 @@ class CIV_Control:
 class CIV_GUI:
     def __init__(self):
         self.fenster = tk.Tk()
-        self.fenster.title('CI-V Controll') # Name Titelleiste Fenster / Programmname
+        self.fenster.title('IC-705 CI-V Controll') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False)
         self.fenster.protocol('WM_DELETE_WINDOW', self.schliessen)
         self.control = CIV_Control()
@@ -153,7 +153,7 @@ class CIV_GUI:
         self.frTitel.rowconfigure(0, weight=1)
         self.lbTitel = tk.Label(self.frTitel,
                                 background=bg_mittel, # Hintergrund
-                                text='Icom Split Controler', # Name des Programms
+                                text='Icom IC-705 Split Controler', # Name des Programms
                                 font=(None, 16, 'bold'),
                                 foreground=schrift) # Schriftfarbe
         self.lbTitel.grid(row=0, column=0)
@@ -185,6 +185,12 @@ class CIV_GUI:
                                text='COM Port:',
                                foreground=schrift)
         self.lbPorts.grid(row=0, column=0)
+
+
+
+
+
+
         self.cbPorts_var = tk.StringVar()
         self.cbPorts = ttk.Combobox(self.frVerbinden,
                                     width=10,
@@ -195,6 +201,11 @@ class CIV_GUI:
         self.cbPorts.grid(row=0, column=1, padx=5, pady=0)
         self.cbPorts_var.trace_add('write', self._cbPorts_auswahl)
         self.cbPorts_var.set(str(self.control.serial_port))
+
+
+
+
+
         self.buPorts_refresh = tk.Button(self.frVerbinden,
                                          command=lambda:self._abfrage_Ports(refresh=True),
                                          text=chr(0x27F3))
@@ -289,14 +300,6 @@ class CIV_GUI:
         self.etOffset.bind('<Return>',self._commit_etOffset)
         self.etOffset.bind('<FocusOut>',self._commit_etOffset)
 
-
-
-
-
-
-
-
-
         self.buOffset_plus = tk.Button(self.frOffset_uli,
                                        command=lambda:self._etOffset_pm(1),
                                        text='+',
@@ -317,14 +320,28 @@ class CIV_GUI:
 
 
 
+
+
+
+
         self.frOffset_ure = tk.Frame(self.frOffset)
         self.frOffset_ure.grid(row=1, column=1, padx=2, pady=0, sticky='w')
-        self.cbSchritt = ttk.Combobox(self.frOffset_ure,
+        self.cbStep_var = tk.StringVar(value=self.control.step)
+        self.cbStep = ttk.Combobox(self.frOffset_ure,
                                       values=[1,10,100,1_000,10_000,100_000,1_000_000],
+                                      textvariable=self.cbStep_var,
                                       state='readonly',
                                       width=12)
-        self.cbSchritt.grid(row=0, column=0)
-        self.cbSchritt.current(0)
+        self.cbStep.grid(row=0, column=0)
+        self.cbStep.bind('<<ComboboxSelected>>', self._cbStep_auswahl)
+
+
+
+
+
+
+
+
 
     def _filter_etOffset(self, value):
         return value == '' or value == '-' or value.lstrip("-").isdigit()
@@ -346,12 +363,27 @@ class CIV_GUI:
 
     def _etOffset_pm(self, plusminus):
         var = int(self.etOffset_var.get())
-        self.etOffset_var.set(var + self.control.step * plusminus)
+        step = int(self.control.step)
+        self.etOffset_var.set(var + step * plusminus)
         self.control.offset=int(self.etOffset_var.get())
         self.refresh_lbRXTX_Anzeige()
 
     def _cbPorts_auswahl(self, *args):
         self.control.serial_port = self.cbPorts_var.get()
+
+    
+    
+    
+    
+    
+    def _cbStep_auswahl(self,*args):
+        self.control.step = self.cbStep.get()
+        pass
+
+    
+
+
+
 
     def _abfrage_Ports(self, refresh=False):
         ports = [p.device for p in serial.tools.list_ports.comports()]
@@ -427,7 +459,7 @@ class CIV_GUI:
     def frequenz_update_thread(self):
         freqrx_alt = 0
         print('start Thread')
-        while self.start_ft and self.control.command_RX_freq:
+        while self.start_ft and self.control.connected:
             freqrx = self.freq_update()
             diff = freqrx - freqrx_alt
             if self.control.freq_tracking:
