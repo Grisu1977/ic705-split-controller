@@ -13,6 +13,7 @@ class CIV_Control:
         self.serial_port = None
         self.freq_tracking = False
         self.connected = False
+        self.lock = threading.Lock()
         self.baud_rate = 19200
         self.time_out = 0.05
         self.trx_Adresse = 0xa4
@@ -45,27 +46,36 @@ class CIV_Control:
             config.write(cf)
 
     def connect(self, port, baud, timeout):
-        try:
-            self.ic705=serial.Serial(port=port,baudrate=baud,timeout=timeout)
-            self.connected = True
-            return True, None
-        except Exception as e:
-            self.ic705 = None
-            return False, e
+        with self.lock:
+            try:
+                self.ic705=serial.Serial(port=port,baudrate=baud,timeout=timeout)
+                self.connected = True
+                print('Verbunden')
+                return True, None
+            except Exception as e:
+                self.ic705 = None
+                return False, e
         
     def disconnect(self):
-        pass
+        with self.lock:
+            try:
+                self.ic705.close()
+                self.connected = False
+                print('Verbindung getrennt')
+            except Exception as e:
+                print(f'Fehler beim Trennen: {e}')
 
     def bcd_abfrage(self):
-        msg=self._message('rx')
-        cmd=bytes(msg)
-        try:
-            self.ic705.write(cmd)
-            time.sleep(0.05)
-            data=self.ic705.read_until().hex(sep=' ')
-            return data
-        except Exception as e:
-            print(f'Fehler bei der bcd Abfrage: {e}')
+        with self.lock:
+            msg=self._message('rx')
+            cmd=bytes(msg)
+            try:
+                self.ic705.write(cmd)
+                time.sleep(0.05)
+                data=self.ic705.read_until().hex(sep=' ')
+                return data
+            except Exception as e:
+                print(f'Fehler bei der bcd Abfrage: {e}')
         
     
     def _message(self, txrx, bcd=None):
@@ -96,12 +106,13 @@ class CIV_Control:
         return freq_bytes
     
     def freq_setzen(self, bcd=list):
-        msg = self._message('tx', bcd)
-        msg = bytes(msg)
-        try:
-            self.ic705.write(msg)
-        except Exception as e:
-            print(f'Fehler beim Frequenz setzen: {e}')
+        with self.lock:
+            msg = self._message('tx', bcd)
+            msg = bytes(msg)
+            try:
+                self.ic705.write(msg)
+            except Exception as e:
+                print(f'Fehler beim Frequenz setzen: {e}')
 
 class CIV_GUI:
     def __init__(self):
@@ -111,10 +122,10 @@ class CIV_GUI:
         self.fenster.protocol('WM_DELETE_WINDOW', self.schliessen)
         self.control = CIV_Control()
         self.control.config_einlesen()
-        self.setup_user_interface()
+        self._setup_user_interface()
         self.start_ft = False
 
-    def setup_user_interface(self):
+    def _setup_user_interface(self):
 
         style = ttk.Style()
         style.theme_use('clam')
@@ -201,7 +212,7 @@ class CIV_GUI:
                                     background="#0000FF",
                                     font=(None,10,'bold'),
                                     state='disabled',
-                                    command=self._tracking)
+                                    command=self._tracking_on)
         self.buTracking.grid(row=0, column=4, padx=5, pady=0)
 
         self.frAnzeige = tk.Frame(self.fenster,
@@ -354,18 +365,14 @@ class CIV_GUI:
         else:
             return ports
 
+    def _tracking_on(self):
+        self.control.freq_tracking = True
+        self.buTracking.config(background="#ffdd00", text='Tracking Stop', command=self._tracking_off)
 
-
-
-    def _tracking(self):
-        if not self.control.freq_tracking:
-            self.control.freq_tracking = True
-            self.buTracking.config(background="#ffdd00", text='Tracking Stop')
-            self.update_lbRXTX_Anzeige(True)
-        else:
-            self.control.freq_tracking = False
-            self.buTracking.config(background="#0000ff", text='Tracking Start')
-            self.lbTX_Anzeige_text.set(value='off')
+    def _tracking_off(self):
+        self.control.freq_tracking = False
+        self.buTracking.config(background="#0000ff", text='Tracking Start', command=self._tracking_on)
+        self.lbTX_Anzeige_text.set(value='off')
 
     def start_frequenz_update_thread(self):
         if not self.start_ft:
@@ -373,90 +380,75 @@ class CIV_GUI:
             if not connect:
                 print(f'Verbindungsfehler * * * {err} * * *')
             else:
-                self.ft = threading.Thread(target=self.frequenz_update_thread)            
+                self.ft = threading.Thread(target=self.frequenz_update_thread, daemon=True)            
                 self.start_ft = True
                 self.buVerbinden.config(text='Trennen', command=self.stop_frequenz_update_thread, background='#ff0000')
                 self.status_indikator.itemconfig(self.status_indikator_oval, fill='#00ff00')
                 self.buTracking.config(state='normal')
                 self.ft.start()
 
-
-
-
-
-
     def stop_frequenz_update_thread(self):
         self.start_ft = False
-        self.ft.join(1)
+        self.control.disconnect()
+        if self.control.freq_tracking:
+            self._tracking_off()
+        self.buTracking.config(state='disabled')
         self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
         self.lbRX_Anzeige_text.set(value='off')
-        if self.control.freq_tracking:
-            self._tracking()
-        self.buTracking.config(state='disabled')
-        self.control.ic705.close()
-
-
-
-    def update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh=False):
-        if not self.start_ft:
-            return
-        mhzrx = freqrx / 1_000_000
-        self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
-        if self.control.freq_tracking and not freqtx == None:
-            mhztx = freqtx / 1_000_000
-            self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
-
-
-
+        
+    def update_lbRXTX_Anzeige(self, freqrx, freqtx=None):
+        if self.start_ft and self.control.connected:
+            mhzrx = freqrx / 1_000_000
+            self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
+            if self.control.freq_tracking and not freqtx == None:
+                mhztx = freqtx / 1_000_000
+                self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
 
     def freq_update(self): # Abfrage der Empfangsfrequenz
-        if not self.start_ft:
-            print('freq update')
-            return
-        bcd = self.control.bcd_abfrage()
-        freq = self.control.bcd_to_freq(bcd)
-        return freq
+        if self.start_ft and self.control.connected:
+            bcd = self.control.bcd_abfrage()
+            freq = self.control.bcd_to_freq(bcd)
+            return freq
 
-    def freq_set(self, freqtx): # Setzender Sendefrequenz im Funkgerät
-        bcd=self.control.freq_to_bcd(freqtx)
-        if not self.start_ft:
-            print('freq set')
-            return
-        self.control.freq_setzen(bcd)
+    def freq_set(self, freqtx): # Setzen der Sendefrequenz im Funkgerät
+        if self.start_ft and self.control.connected:
+            bcd=self.control.freq_to_bcd(freqtx)
+            self.control.freq_setzen(bcd)
 
     def frequenz_update_thread(self):
         freqrx_alt = 0
-        while self.start_ft:
-            print('aktiv')
+        freqtx = None
+        print('start Thread')
+        while self.start_ft and self.control.command_RX_freq:
             freqrx = self.freq_update()
-            freqtx = freqrx + self.control.offset
             diff = freqrx - freqrx_alt
             if self.control.freq_tracking:
-                self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx, freqtx)
-                if abs(diff) > 0:
+                if abs(diff) > 0 or freqtx == None:
+                    freqtx = freqrx + self.control.offset
+                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx, freqtx)
                     self.freq_set(freqtx)
             else:
                 self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
             freqrx_alt = freqrx
-            for i in range(10):
-                if not self.start_ft:
+            for i in range(25):
+                if not self.control.freq_tracking:
+                    freqtx = None
+                if not self.start_ft or not self.control.connected:
                     print('stop', i)
                     break
-                time.sleep(0.025)
-        print('beendet')
+                time.sleep(0.01)
+        print('Thread beendet')
 
     def hilfe(self):
         pass
 
     def schliessen(self):
-#        if self.start_ft:
-#            self.stop_frequenz_update_thread()
-        self.start_ft = False
-        self.ft.join(1)
-        self.control.ic705.close()        
-        time.sleep(1)
+        if self.start_ft:
+            self.stop_frequenz_update_thread()
+            print('nach stop_frequenz_update')
         self.fenster.destroy()
+        print('fenster geschlossen')
         self.control.config_schreiben()
         print('Config.ini Geschrieben')
 
