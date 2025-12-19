@@ -55,7 +55,7 @@ class CIV_Control:
             except Exception as e:
                 self.ic705 = None
                 return False, e
-        
+
     def disconnect(self):
         with self.lock:
             try:
@@ -76,8 +76,7 @@ class CIV_Control:
                 return data
             except Exception as e:
                 print(f'Fehler bei der bcd Abfrage: {e}')
-        
-    
+
     def _message(self, txrx, bcd=None):
         msg=[]
         if txrx == 'tx':
@@ -86,7 +85,7 @@ class CIV_Control:
         else:
             msg = [0xfe, 0xfe, self.trx_Adresse, self.controler_Adresse, self.command_RX_freq, 0xfd]
         return msg
-    
+
     # extration der Frequenz
     def bcd_to_freq(self, bcd=str):
             ldata = bcd.split(' ')
@@ -98,13 +97,13 @@ class CIV_Control:
             qrg_bytes.reverse() 
             qrg = ''.join(qrg_bytes) # Liste wieder umwandeln zu einem String
             return int(qrg) # Ausgabe der Frequenz in Hz als ganze Zahl
-    
+
     def freq_to_bcd(self, freq):
         freq = f'{freq:010d}'#f'{int(freq * 1e6):010d}'
         freq_bytes = [int(freq[i]+freq[i+1],16) for i in range(0, len(freq)-1, 2)]
         freq_bytes.reverse()
         return freq_bytes
-    
+
     def freq_setzen(self, bcd=list):
         with self.lock:
             msg = self._message('tx', bcd)
@@ -329,14 +328,14 @@ class CIV_GUI:
 
     def _filter_etOffset(self, value):
         return value == '' or value == '-' or value.lstrip("-").isdigit()
-    
+
     def _commit_etOffset(self, event=None):
         raw_etOffset = self.etOffset_var.get()
         try:
             value_etOffst = int(raw_etOffset)
             if -1_000_000_000 < value_etOffst < 1_000_000_000:
                 self.control.offset=value_etOffst
-                self.update_lbRXTX_Anzeige(True)
+                self.refresh_lbRXTX_Anzeige()
             else:
                 raise ValueError
         except ValueError as e:
@@ -349,7 +348,7 @@ class CIV_GUI:
         var = int(self.etOffset_var.get())
         self.etOffset_var.set(var + self.control.step * plusminus)
         self.control.offset=int(self.etOffset_var.get())
-        self.update_lbRXTX_Anzeige(True)
+        self.refresh_lbRXTX_Anzeige()
 
     def _cbPorts_auswahl(self, *args):
         self.control.serial_port = self.cbPorts_var.get()
@@ -368,6 +367,7 @@ class CIV_GUI:
     def _tracking_on(self):
         self.control.freq_tracking = True
         self.buTracking.config(background="#ffdd00", text='Tracking Stop', command=self._tracking_off)
+        self.refresh_lbRXTX_Anzeige()
 
     def _tracking_off(self):
         self.control.freq_tracking = False
@@ -396,14 +396,22 @@ class CIV_GUI:
         self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
         self.lbRX_Anzeige_text.set(value='off')
-        
-    def update_lbRXTX_Anzeige(self, freqrx, freqtx=None):
+
+    def refresh_lbRXTX_Anzeige(self):
+        if self.start_ft and self.control.freq_tracking:
+            rx = self.freq_update()
+            tx = rx + self.control.offset
+            self.update_lbRXTX_Anzeige(freqrx=rx, freqtx=tx, refresh=True)
+
+    def update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh = False):
         if self.start_ft and self.control.connected:
             mhzrx = freqrx / 1_000_000
             self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
             if self.control.freq_tracking and not freqtx == None:
                 mhztx = freqtx / 1_000_000
                 self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
+                if refresh:
+                    self.freq_set(freqtx)
 
     def freq_update(self): # Abfrage der Empfangsfrequenz
         if self.start_ft and self.control.connected:
@@ -418,13 +426,12 @@ class CIV_GUI:
 
     def frequenz_update_thread(self):
         freqrx_alt = 0
-        freqtx = None
         print('start Thread')
         while self.start_ft and self.control.command_RX_freq:
             freqrx = self.freq_update()
             diff = freqrx - freqrx_alt
             if self.control.freq_tracking:
-                if abs(diff) > 0 or freqtx == None:
+                if abs(diff) > 0:
                     freqtx = freqrx + self.control.offset
                     self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx, freqtx)
                     self.freq_set(freqtx)
@@ -432,8 +439,6 @@ class CIV_GUI:
                 self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
             freqrx_alt = freqrx
             for i in range(25):
-                if not self.control.freq_tracking:
-                    freqtx = None
                 if not self.start_ft or not self.control.connected:
                     print('stop', i)
                     break
