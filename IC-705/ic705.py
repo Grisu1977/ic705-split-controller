@@ -1,3 +1,20 @@
+'''
+Docstring
+Icom IC-705 Split Controller
+Autor: Pascal Pfau (DH1PV)
+Version: 0.x
+Benötigte Bibliotheken:
+- pip install pyserial
+Aussichten:
+- Hilfefenster bzw Infofenster
+- Interaktionsmeldungen mit Messagebox
+- Verbesserung der Fehleranpassung (Try/except)
+Zukünftige versionen:
+- Manuelles setzen der TX/RX Frequenz mit berechnung und setzen des Offsets
+- Automatisches angleichen des Modes VFO A / VFO B bei wechsel
+- Verbindung via WLAN
+'''
+
 import time
 import serial
 import serial.tools.list_ports
@@ -10,18 +27,19 @@ from pathlib import Path
 class CIV_Control:    
     def __init__(self):
         self.configfile = 'config.ini'
-        self.serial_port = None
         self.freq_tracking = False
         self.connected = False
         self.lock = threading.Lock()
-        self.baud_rate = 19200
-        self.time_out = 0.05
-        self.trx_Adresse = 0xa4
-        self.controler_Adresse = 0xe0
-        self.command_RX_freq = 0x03
-        self.command_TX_freq = 0x25, 0x01
-        self.offset = 287_500_000
-        self.step = 10
+        # Default-Werte werden durch die Werte aus der 'config.ini' überschrieben
+        self.serial_port = None # Serielle schnittstelle (Default)
+        self.baud_rate = 19200 # Default TRX-Baudrate
+        self.time_out = 0.05 # Timeout beim Connect zum TRX via Pyserial
+        self.trx_Adresse = 0xa4 # Default TRX-Adresse
+        self.controler_Adresse = 0xe0 # Muss in der regel nicht angepasst werden
+        self.command_RX_freq = 0x03 # Hex CI-V Komando für die Frequenzabfrage (aktiver VFO)
+        self.command_TX_freq = 0x25, 0x01 # Hex CI-V Komando für das setzen der TX-Frequenz (nicht aktiver VFO)
+        self.offset = 287_500_000 # Default Offset für QO-100
+        self.step = 10 # Default Schrittweite für manuelles nachjustieren
 
     def config_einlesen(self):
         config = configparser.ConfigParser()
@@ -39,13 +57,28 @@ class CIV_Control:
         config['Transceiver'] = {
             'Last_COM_Port':str(self.serial_port),
             'Baud_Rate':self.baud_rate,
-            'TRX_Adresse':f'{self.trx_Adresse:02x}'
+            'TRX_Adresse':f'{self.trx_Adresse:02x}' # Speichern als zweistellige HEX-Zahl
             }
         config['Offset'] = {'Last_Offset':self.offset,'Last_Step':self.step}
+        # öffnen und schreiben der *.ini
         with open(self.configfile, 'w') as cf:
-            config.write(cf)
+            cf.write( # Kommentarblock in der Datei
+                '; #================================================#\n' \
+                '; | Konfigurationsdatei für IC-705 CI-V Controll   |\n' \
+                '; | Autor Pascal Pfau (DH1PV)                      |\n' \
+                '; | Diese Datei wird automatisch erzeugt.          |\n' \
+                '; | Manuelle Änderungen sind möglich,              |\n' \
+                '; | geschen auf eigene Gefahr. Sollte Programm     |\n' \
+                '; | nach änderungen nicht mehr wie erwartet laufen,|\n' \
+                '; | kann diese Datei gefahrlos gelöscht werden.    |\n' \
+                '; | Die Nutzung des Programms geschieht auf eigene |\n' \
+                '; | Gefahr.                                        |\n' \
+                '; #================================================#\n\n'
+            )
+            config.write(cf) # Konfiguration
 
     def connect(self, port, baud, timeout):
+        # Aufbau der verbindung zum TRX über Serielle Schnittstelle
         with self.lock:
             try:
                 self.ic705=serial.Serial(port=port,baudrate=baud,timeout=timeout)
@@ -57,6 +90,7 @@ class CIV_Control:
                 return False, e
 
     def disconnect(self):
+        # Schließen der seriellen Schnittstelle
         with self.lock:
             try:
                 self.ic705.close()
@@ -65,46 +99,45 @@ class CIV_Control:
             except Exception as e:
                 print(f'Fehler beim Trennen: {e}')
 
-    def bcd_abfrage(self):
+    def bcd_abfrage(self): # binär codierte Dezimalzahl
         with self.lock:
             msg=self._message('rx')
             cmd=bytes(msg)
             try:
-                self.ic705.write(cmd)
+                self.ic705.write(cmd) # Abfrage
                 time.sleep(0.05)
-                data=self.ic705.read_until().hex(sep=' ')
+                data=self.ic705.read_until().hex(sep=' ') # empfang des unformatierten Datenstromes
                 return data
             except Exception as e:
                 print(f'Fehler bei der bcd Abfrage: {e}')
 
     def _message(self, txrx, bcd=None):
         msg=[]
-        if txrx == 'tx':
+        if txrx == 'tx': # Generierung der Message zum setzen der Sendefrequenz im TRX
             msg = [0xfe, 0xfe, self.trx_Adresse, self.controler_Adresse, self.command_TX_freq[0], self.command_TX_freq[1], 0xfd]
             msg[6:6]=bcd
-        else:
+        else: # Generierung der Message zur abfrage der Empfangsfrequenz
             msg = [0xfe, 0xfe, self.trx_Adresse, self.controler_Adresse, self.command_RX_freq, 0xfd]
         return msg
 
-    # extration der Frequenz
-    def bcd_to_freq(self, bcd=str):
-            ldata = bcd.split(' ')
-            for i in range(len(ldata)-1, -1, -1):
+    def bcd_to_freq(self, bcd=str): # extration der Frequenz
+            ldata = bcd.split(' ') # erstellung einer Liste aus den Rohdaten
+            for i in range(len(ldata)-1, -1, -1): # suche nach dem letztem 'fd' (Ende Datenstring)
                 if ldata[i] == 'fd':
                     fd = i
                     break
             qrg_bytes = [ldata[i] for i in range(fd-5, fd)] # Extration der fünf Frequenzbytes
-            qrg_bytes.reverse() 
+            qrg_bytes.reverse() # Bytes in richtige reihenfolge bringen
             qrg = ''.join(qrg_bytes) # Liste wieder umwandeln zu einem String
             return int(qrg) # Ausgabe der Frequenz in Hz als ganze Zahl
 
-    def freq_to_bcd(self, freq):
-        freq = f'{freq:010d}'#f'{int(freq * 1e6):010d}'
-        freq_bytes = [int(freq[i]+freq[i+1],16) for i in range(0, len(freq)-1, 2)]
-        freq_bytes.reverse()
+    def freq_to_bcd(self, freq): # Aus der Frequenz wieder eine binär codierte Dezimalzahl machen
+        freq = f'{freq:010d}' # Auffüllen mit nullen
+        freq_bytes = [int(freq[i]+freq[i+1],16) for i in range(0, len(freq)-1, 2)] # Generierung der bytes und schreiben in eine Liste
+        freq_bytes.reverse() # Bytes in richtige reihenfolge bringen
         return freq_bytes
 
-    def freq_setzen(self, bcd=list):
+    def freq_setzen(self, bcd=list): # Setzen der Sendefrequenz. Nicht aktiver VFO
         with self.lock:
             msg = self._message('tx', bcd)
             msg = bytes(msg)
@@ -186,11 +219,6 @@ class CIV_GUI:
                                foreground=schrift)
         self.lbPorts.grid(row=0, column=0)
 
-
-
-
-
-
         self.cbPorts_var = tk.StringVar()
         self.cbPorts = ttk.Combobox(self.frVerbinden,
                                     width=10,
@@ -201,10 +229,6 @@ class CIV_GUI:
         self.cbPorts.grid(row=0, column=1, padx=5, pady=0)
         self.cbPorts_var.trace_add('write', self._cbPorts_auswahl)
         self.cbPorts_var.set(str(self.control.serial_port))
-
-
-
-
 
         self.buPorts_refresh = tk.Button(self.frVerbinden,
                                          command=lambda:self._abfrage_Ports(refresh=True),
@@ -313,17 +337,6 @@ class CIV_GUI:
                                         height=1)
         self.buOffset_minus.grid(row=0, column=1, padx=1, pady=5)
 
-
-
-
-
-
-
-
-
-
-
-
         self.frOffset_ure = tk.Frame(self.frOffset)
         self.frOffset_ure.grid(row=1, column=1, padx=2, pady=0, sticky='w')
         self.cbStep_var = tk.StringVar(value=self.control.step)
@@ -334,14 +347,6 @@ class CIV_GUI:
                                       width=12)
         self.cbStep.grid(row=0, column=0)
         self.cbStep.bind('<<ComboboxSelected>>', self._cbStep_auswahl)
-
-
-
-
-
-
-
-
 
     def _filter_etOffset(self, value):
         return value == '' or value == '-' or value.lstrip("-").isdigit()
@@ -371,19 +376,8 @@ class CIV_GUI:
     def _cbPorts_auswahl(self, *args):
         self.control.serial_port = self.cbPorts_var.get()
 
-    
-    
-    
-    
-    
     def _cbStep_auswahl(self,*args):
         self.control.step = self.cbStep.get()
-        pass
-
-    
-
-
-
 
     def _abfrage_Ports(self, refresh=False):
         ports = [p.device for p in serial.tools.list_ports.comports()]
