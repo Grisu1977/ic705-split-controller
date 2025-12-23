@@ -8,7 +8,7 @@ Benötigte Bibliotheken:
 Einstellungen im TRX:
 - CI-V USB Echo Back muss 'off' sein
 Geplante Anpassungen:
-- [] Hilfefenster / Infofenster
+- [✓] Hilfefenster / Infofenster
 - [] Interaktionsmeldungen mit Messagebox
 - [] Verbesserung der Fehleranpassung (Try/except)
 - [] thread mit event beenden
@@ -23,6 +23,7 @@ import serial
 import serial.tools.list_ports
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox
 import threading
 import configparser
 from pathlib import Path
@@ -154,7 +155,7 @@ class CIV_GUI:
         self.fenster = tk.Tk()
         self.fenster.title('IC-705 CI-V Controll') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False)
-        self.fenster.protocol('WM_DELETE_WINDOW', self.schliessen)
+        self.fenster.protocol('WM_DELETE_WINDOW', self.closeFenster)
         self.control = CIV_Control()
         self.control.config_einlesen()
         self._setup_user_interface()
@@ -166,19 +167,19 @@ class CIV_GUI:
         style.theme_use('clam')
 
         # Definition der Farben im Fenster
-        bg_ausgabe = "#000000"
-        fg_ausgabeRX = "#00ff00"
-        fg_ausgabeTX = "#ff0000"
-        bg_dunkel = "#1e293b"
-        bg_mittel = "#334155"
-        rahmen_hell = "#dbdbbd"
-        schrift = "#ffffff"
+        self.bg_ausgabe = "#000000"
+        self.fg_ausgabeRX = "#00ff00"
+        self.fg_ausgabeTX = "#ff0000"
+        self.bg_dunkel = "#1e293b"
+        self.bg_mittel = "#334155"
+        self.rahmen_hell = "#dbdbbd"
+        self.schrift = "#ffffff"
 
-        self.fenster.configure(background=bg_dunkel) # Setzen der Hintergrundfarbe
+        self.fenster.configure(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
 
         self.frTitel = tk.Frame(self.fenster,
-                                background=bg_mittel,
-                                highlightbackground=rahmen_hell,
+                                background=self.bg_mittel,
+                                highlightbackground=self.rahmen_hell,
                                 highlightthickness=1,
                                 width=425,
                                 height=50)
@@ -188,17 +189,17 @@ class CIV_GUI:
         self.frTitel.columnconfigure(1,weight=1)
         self.frTitel.rowconfigure(0, weight=1)
         self.lbTitel = tk.Label(self.frTitel,
-                                background=bg_mittel, # Hintergrund
+                                background=self.bg_mittel, # Hintergrund
                                 text='Icom IC-705 Split Controler', # Name des Programms
                                 font=(None, 16, 'bold'),
-                                foreground=schrift) # Schriftfarbe
+                                foreground=self.schrift) # Schriftfarbe
         self.lbTitel.grid(row=0, column=0)
-        self.frTitel_re = tk.Frame(self.frTitel, background=bg_mittel)
+        self.frTitel_re = tk.Frame(self.frTitel, background=self.bg_mittel)
         self.frTitel_re.grid(row=0, column=1, sticky='e')
         self.status_indikator = tk.Canvas(self.frTitel_re,
                                           width=15,
                                           height=15,
-                                          bg=bg_mittel,
+                                          bg=self.bg_mittel,
                                           highlightthickness=0)
         self.status_indikator.grid(row=0, column=0)
         self.status_indikator_oval = self.status_indikator.create_oval(0, 0, 15, 15, fill='#ff0000')
@@ -207,19 +208,19 @@ class CIV_GUI:
                                  text='?', 
                                  font=(None, 13, 'bold'),
                                  foreground='red',
-                                 background=bg_mittel,
+                                 background=self.bg_mittel,
                                  borderwidth=0,
                                  highlightthickness=0,
-                                 activebackground=bg_mittel)
+                                 activebackground=self.bg_mittel)
         self.buHilfe.grid(row=0, column=1)
 
-        self.frVerbinden = tk.Frame(self.fenster, background=bg_dunkel)
+        self.frVerbinden = tk.Frame(self.fenster, background=self.bg_dunkel)
         self.frVerbinden.grid(row=1, column=0, padx=5, pady=2, sticky='w')
         self.lbPorts = tk.Label(self.frVerbinden,
                                relief='flat',
-                               background=bg_dunkel,
+                               background=self.bg_dunkel,
                                text='COM Port:',
-                               foreground=schrift)
+                               foreground=self.schrift)
         self.lbPorts.grid(row=0, column=0)
 
         self.cbPorts_var = tk.StringVar()
@@ -253,8 +254,8 @@ class CIV_GUI:
         self.buTracking.grid(row=0, column=4, padx=5, pady=0)
 
         self.frAnzeige = tk.Frame(self.fenster,
-                                  background=bg_mittel,
-                                  highlightbackground=rahmen_hell,
+                                  background=self.bg_mittel,
+                                  highlightbackground=self.rahmen_hell,
                                   highlightthickness=1)
         self.frAnzeige.grid(row=2, column=0, padx=5, pady=5, sticky='ew')
         self.frAnzeige.rowconfigure(0, weight=1)
@@ -264,20 +265,20 @@ class CIV_GUI:
         self.lbRX = tk.Label(self.frAnzeige,
                              text='RX Frequenz',
                              font=(None, 12, 'bold'),
-                             background=bg_mittel,
-                             foreground=fg_ausgabeRX)
+                             background=self.bg_mittel,
+                             foreground=self.fg_ausgabeRX)
         self.lbRX.grid(row=0, column=0, padx=2, pady=0)
         self.lbTX = tk.Label(self.frAnzeige,
                              text='TX Frequenz',
                              font=(None, 12, 'bold'),
-                             background=bg_mittel,
-                             foreground=fg_ausgabeTX)
+                             background=self.bg_mittel,
+                             foreground=self.fg_ausgabeTX)
         self.lbTX.grid(row=0, column=1, padx=2, pady=0)
         self.lbRX_Anzeige_text = tk.StringVar(value='off')
         self.lbRX_Anzeige = tk.Label(self.frAnzeige,
                                      relief='sunken',
-                                     background=bg_ausgabe,
-                                     foreground=fg_ausgabeRX,
+                                     background=self.bg_ausgabe,
+                                     foreground=self.fg_ausgabeRX,
                                      textvariable=self.lbRX_Anzeige_text,
                                      font=('Courier New', 15),
                                      width=15,
@@ -286,8 +287,8 @@ class CIV_GUI:
         self.lbTX_Anzeige_text = tk.StringVar(value='off')
         self.lbTX_Anzeige = tk.Label(self.frAnzeige,
                                      relief='sunken',
-                                     background=bg_ausgabe,
-                                     foreground=fg_ausgabeTX,
+                                     background=self.bg_ausgabe,
+                                     foreground=self.fg_ausgabeTX,
                                      textvariable=self.lbTX_Anzeige_text,
                                      font=('Courier New', 15),
                                      width=15,
@@ -295,26 +296,26 @@ class CIV_GUI:
         self.lbTX_Anzeige.grid(row=1, column=1, padx=2, pady=2, sticky='ew')
 
         self.frOffset = tk.Frame(self.fenster,
-                                 background=bg_mittel,
-                                 highlightbackground=rahmen_hell,
+                                 background=self.bg_mittel,
+                                 highlightbackground=self.rahmen_hell,
                                  highlightthickness=1)
         self.frOffset.grid(row=3, column=0, padx=5, pady=5, sticky='ew')
         self.frOffset.columnconfigure(0, weight=1, uniform='col')
         self.frOffset.columnconfigure(1, weight=1, uniform='col')
         self.lbOffset = tk.Label(self.frOffset,
-                                 background=bg_mittel,
+                                 background=self.bg_mittel,
                                  text='Frequenz - Offset (Hz)',
                                  font=(None, 8),
-                                 foreground=schrift)
+                                 foreground=self.schrift)
         self.lbOffset.grid(row=0, column=0, sticky='w')
         self.lbOffset_schritt = tk.Label(self.frOffset,
-                                         background=bg_mittel,
+                                         background=self.bg_mittel,
                                          text='Schrittweite',
                                          font=(None, 8),
-                                         foreground=schrift)
+                                         foreground=self.schrift)
         self.lbOffset_schritt.grid(row=0, column=1, sticky='w')
         self.frOffset_uli = tk.Frame(self.frOffset,
-                                     background=bg_mittel)
+                                     background=self.bg_mittel)
         self.frOffset_uli.grid(row=1, column=0, padx=2, pady=0, sticky='w')
         self.etOffset_var = tk.StringVar(value=self.control.offset)
         self.etOffset = tk.Entry(self.frOffset_uli,
@@ -477,9 +478,65 @@ class CIV_GUI:
         print('Thread beendet')
 
     def hilfe(self):
-        pass
+        '''Generierung eines Hilfe- und Infofensters'''
+        info = '''\
+Icom IC-705 Split Controller v0.x
+Autor: Pascal Pfau (DH1PV)
+eMail: dh1pv@darc.de
+©2025\n
+Funktionen:
+- Frequenznachführung für Crossbandbetrieb
+- Offset-Korrektur
+- Feinabstimmung der TX-Frequenz
+- Speicherung der Einstellungen\n
+Disclaimer:
+Die benutzung des Programms geschied auf eigene Gefahr. Für Schäden an Geräten (Computer, TRX, etc.) \
+und Software, sowie Datenverlussten, übernehme ich keinerlei haftung.\n
+Erste schritte:
+Nach dem Start als erstes den richtigen Seriellen Port auswählen. Meist in der Geräteverwaltung mit \
+CI-V gekennzeichnet. Danach auf Verbinden klicken. Jetzt wird die Aktuelle RX-Frequenz angezeigt. Zum \
+Nachführen der TX-Frequenz Tracking Start klicken. Nun wird auch die Aktuelle TX-Frequenz Angezeigt und \
+automatisch anhand des aktuell eingestelltem Offsets gesetzt.
+Das Offset kann manuell in Herz eingegeben werden oder aber in einzelschritten, einstellbar unter \
+Schrittweite, mit "+" und "-" eingestellt werden.\n
+! ! ! ACHTUNG ! ! !
+Damit das Programm richtig funktioniert ist es erforderlich das sowol 
+MENU >> Connectors >> CI-V >> CI-V USB Echo Back = OFF
+und bei nutzung via Bluetooth
+MENU >> Bluetooth Set >> Data Device Set >> Serialport Funktion = CI-V (Echo Back OFF)
+eingestellt ist.\
+'''
 
-    def schliessen(self):
+        fensterHilfe = tk.Toplevel(self.fenster, background=self.bg_dunkel)
+        fensterHilfe.title('Info / Hilfe')
+        fensterHilfe.resizable(0,0)
+        fensterHilfe.transient(self.fenster)
+        fensterHilfe.grab_set()
+            
+        frText = ttk.Frame(fensterHilfe)
+        frText.grid(row=0, column=0, padx=5, pady=5)
+        sbText = tk.Scrollbar(frText, orient='vertical')
+        sbText.grid(row=0, column=1, sticky='ns')
+
+        text = tk.Text(frText, wrap='word', width=55, background=self.bg_mittel, foreground="#00ff00", yscrollcommand=sbText.set)
+        text.grid(row=0, column=0)
+        text.insert(1.0, info)
+        text.config(state='disabled')
+        sbText.config(command=text.yview)
+
+        buOK = ttk.Button(fensterHilfe, text='Schließen', command=fensterHilfe.destroy)
+        buOK.grid(row=1, column=0, pady=(0, 5))
+        
+        fensterHilfe.update_idletasks()
+        screen_w = fensterHilfe.winfo_screenwidth()
+        screen_h = fensterHilfe.winfo_screenheight()
+        width = fensterHilfe.winfo_width()
+        height = fensterHilfe.winfo_height()
+        x = (screen_w // 2) - (width // 2)
+        y = ((screen_h // 2) - (height // 2)) * 0.66
+        fensterHilfe.geometry(f'{width}x{height}+{x}+{round(y)}')
+
+    def closeFenster(self):
         if self.start_ft:
             self.stop_frequenz_update_thread()
             print('nach stop_frequenz_update')
