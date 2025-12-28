@@ -13,6 +13,7 @@ Geplante Anpassungen:
 - [] Verbesserung der Fehleranpassung (Try/except)
 - [] thread mit event beenden
 Zukünftige versionen:
+- [] Hinzufügen eines Tray-Icons
 - [] Manuelles setzen der TX/RX Frequenz mit berechnung und setzen des Offsets
 - [] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
 - [] Verbindung via WLAN
@@ -85,7 +86,14 @@ class CIV_Control:
         # Aufbau der verbindung zum TRX über Serielle Schnittstelle
         with self.lock:
             try:
-                self.ic705=serial.Serial(port=port,baudrate=baud,timeout=timeout)
+                self.ic705=serial.Serial(port=port, baudrate=baud, timeout=timeout, write_timeout=5)
+                '''überprüfung ob verbindung korreckt hergestellt worden ist und ob gerät auch korrekt antwortet'''
+                self.ic705.write([0xfe,0xfe,0xa4,0xe0,0x03,0xfd])
+                time.sleep(0.05)
+                dataTest=self.ic705.read_until()
+                if len(dataTest) < 7:
+                    self.ic705.close()
+                    raise IOError('Gerät antwortet nicht richtig. Ist gerät eingeschaltet? Richtiger Port?')
                 self.connected = True
                 print('Verbunden')
                 return True, None
