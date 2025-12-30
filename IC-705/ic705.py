@@ -2,7 +2,7 @@
 Docstring
 Icom IC-705 Split Controller
 Autor: Pascal Pfau (DH1PV)
-Version: 0.x
+Version: 1.0.0
 Benötigte Bibliotheken:
 - pip install pyserial
 Einstellungen im TRX:
@@ -11,10 +11,10 @@ Geplante Anpassungen:
 - [✓] Hilfefenster / Infofenster
 - [] Interaktionsmeldungen mit Messagebox
 - [] Verbesserung der Fehleranpassung (Try/except)
-- [] thread mit event beenden
 Zukünftige versionen:
+- [] Optionale Speicherung der Fensterposition
 - [] Hinzufügen eines Tray-Icons
-- [] Manuelles setzen der TX/RX Frequenz mit berechnung und setzen des Offsets
+- [] Manuelles setzen der TX/RX Frequenz mit berechnung und setzen der Offsetfrequenz
 - [] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
 - [] Verbindung via WLAN
 '''
@@ -38,7 +38,7 @@ class CIV_Control:
         # Default-Werte werden durch die Werte aus der 'config.ini' überschrieben
         self.serial_port = None # Serielle schnittstelle (Default)
         self.baud_rate = 19200 # Default TRX-Baudrate
-        self.time_out = 0.05 # Timeout beim Connect zum TRX via Pyserial
+        self.time_out = 0.1 # Timeout beim Connect zum TRX via Pyserial
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
         self.controller_Adresse = 0xe0 # Muss in der regel nicht angepasst werden
         self.command_RX_freq = 0x03 # Hex CI-V Komando für die Frequenzabfrage (aktiver VFO)
@@ -82,23 +82,32 @@ class CIV_Control:
             )
             config.write(cf) # Konfiguration
 
-    def connect(self, port, baud, timeout):
+    def connect(self):
         # Aufbau der verbindung zum TRX über Serielle Schnittstelle
         with self.lock:
+            if self.serial_port is None:
+                return False, 'Wähle einen Port'
             try:
-                self.ic705=serial.Serial(port=port, baudrate=baud, timeout=timeout, write_timeout=5)
+                self.ic705 = serial.Serial(port=self.serial_port, baudrate=self.baud_rate, timeout=self.time_out, write_timeout=2)
                 '''überprüfung ob verbindung korreckt hergestellt worden ist und ob gerät auch korrekt antwortet'''
                 self.ic705.write([0xfe,0xfe,0xa4,0xe0,0x03,0xfd])
                 time.sleep(0.05)
-                dataTest=self.ic705.read_until()
+                dataTest = self.ic705.read_until()
                 if len(dataTest) < 7:
                     self.ic705.close()
-                    raise IOError('Gerät antwortet nicht richtig. Ist gerät eingeschaltet? Richtiger Port?')
+                    raise IOError('Keine korrekte Antwort vom Tranceiver.\
+                                  \rIst der Tranceiver eingeschaltet?\
+                                  \rIst der Richtige Port gewählt?')
                 self.connected = True
                 print('Verbunden')
                 return True, None
+            except serial.SerialTimeoutException as e:
+                self.ic705 = None
+                print(f'Verbindungsfehler * * * {e} * * *')
+                return False, e
             except Exception as e:
                 self.ic705 = None
+                print(f'Verbindungsfehler * * * {e} * * *')
                 return False, e
 
     def disconnect(self):
@@ -111,18 +120,6 @@ class CIV_Control:
             except Exception as e:
                 print(f'Fehler beim Trennen: {e}')
 
-    def bcd_abfrage(self): # binär codierte Dezimalzahl
-        with self.lock:
-            msg=self._message('rx')
-            cmd=bytes(msg)
-            try:
-                self.ic705.write(cmd) # Abfrage
-                time.sleep(0.05)
-                data=self.ic705.read_until().hex(sep=' ') # empfang des unformatierten Datenstromes
-                return data
-            except Exception as e:
-                print(f'Fehler bei der bcd Abfrage: {e}')
-
     def _message(self, txrx, bcd=None):
         msg=[]
         if txrx == 'tx': # Generierung der Message zum setzen der Sendefrequenz im TRX
@@ -132,16 +129,34 @@ class CIV_Control:
             msg = [0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, self.command_RX_freq, 0xfd]
         return msg
 
+    def bcd_abfrage(self): # Binär Codierte Dezimalzahl
+        with self.lock:
+            msg = self._message('rx')
+            cmd = bytes(msg)
+            try:
+                self.ic705.reset_input_buffer()
+                self.ic705.write(cmd) # Abfrage
+                data = self.ic705.read_until(b'\xfd').hex(sep=' ') # empfang des unformatierten Datenstromes
+                return data, None
+            except Exception as e:
+                print(f'Fehler bei der bcd Abfrage: *** {e} ***')
+                return None, e
+
     def bcd_to_freq(self, bcd=str): # extration der Frequenz
-            ldata = bcd.split(' ') # erstellung einer Liste aus den Rohdaten
-            for i in range(len(ldata)-1, -1, -1): # suche nach dem letztem 'fd' (Ende Datenstring)
-                if ldata[i] == 'fd':
-                    fd = i
-                    break
-            qrg_bytes = [ldata[i] for i in range(fd-5, fd)] # Extration der fünf Frequenzbytes
-            qrg_bytes.reverse() # Bytes in richtige reihenfolge bringen
-            qrg = ''.join(qrg_bytes) # Liste wieder umwandeln zu einem String
-            return int(qrg) # Ausgabe der Frequenz in Hz als ganze Zahl
+            try:
+                ldata = bcd.split(' ') # erstellung einer Liste aus den Rohdaten
+                for i in range(len(ldata)-1, -1, -1): # suche nach dem letztem 'fd' (Ende Datenstring)
+                    if ldata[i] == 'fd':
+                        fd = i
+                        break
+                qrg_bytes = [ldata[i] for i in range(fd-5, fd)] # Extration der fünf Frequenzbytes
+                qrg_bytes.reverse() # Bytes in richtige reihenfolge bringen
+                qrg = ''.join(qrg_bytes) # Liste wieder umwandeln zu einem String
+                return int(qrg), None # Ausgabe der Frequenz in Hz als ganze Zahl
+            except Exception as e:
+                print(f'Fehler bei der umwandlung bcd_to_freq: *** {e} ***')
+                print(bcd)
+                return None, e
 
     def freq_to_bcd(self, freq): # Aus der Frequenz wieder eine binär codierte Dezimalzahl machen
         freq = f'{freq:010d}' # Auffüllen mit nullen
@@ -149,7 +164,7 @@ class CIV_Control:
         freq_bytes.reverse() # Bytes in richtige reihenfolge bringen
         return freq_bytes
 
-    def freq_setzen(self, bcd=list): # Setzen der Sendefrequenz. Nicht aktiver VFO
+    def txfreq_setzen(self, bcd=list): # Setzen der Sendefrequenz. Nicht aktiver VFO
         with self.lock:
             msg = self._message('tx', bcd)
             msg = bytes(msg)
@@ -161,6 +176,7 @@ class CIV_Control:
 class CIV_GUI:
     def __init__(self):
         self.fenster = tk.Tk()
+        self.fenster.iconbitmap('ic705.ico')
         self.fenster.title('IC-705 CI-V Controll') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False)
         self.fenster.protocol('WM_DELETE_WINDOW', self.closeFenster)
@@ -386,7 +402,7 @@ class CIV_GUI:
         self.refresh_lbRXTX_Anzeige()
 
     def _cbPorts_auswahl(self, *args):
-        self.control.serial_port = self.cbPorts_var.get()
+        self.control.serial_port = None if self.cbPorts_var.get() == 'None' else self.cbPorts_var.get()
 
     def _cbStep_auswahl(self,*args):
         self.control.step = self.cbStep.get()
@@ -414,9 +430,9 @@ class CIV_GUI:
 
     def start_frequenz_update_thread(self):
         if not self.start_ft:
-            connect, err = self.control.connect(self.control.serial_port, self.control.baud_rate, self.control.time_out)
+            connect, err = self.control.connect()
             if not connect:
-                print(f'Verbindungsfehler * * * {err} * * *')
+                messagebox.showerror(title='Verbindungsfehler', message=err)
             else:
                 self.ft = threading.Thread(target=self.frequenz_update_thread, daemon=True)            
                 self.start_ft = True
@@ -427,9 +443,9 @@ class CIV_GUI:
 
     def stop_frequenz_update_thread(self):
         self.start_ft = False
-        self.control.disconnect()
         if self.control.freq_tracking:
             self._tracking_off()
+        self.control.disconnect()
         self.buTracking.config(state='disabled')
         self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
@@ -445,50 +461,57 @@ class CIV_GUI:
         if self.start_ft and self.control.connected:
             mhzrx = freqrx / 1_000_000
             self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
-            if self.control.freq_tracking and not freqtx == None:
+            if self.control.freq_tracking and not freqtx is None:
                 mhztx = freqtx / 1_000_000
                 self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
                 if refresh:
-                    self.freq_set(freqtx)
+                    self.txfreq_set(freqtx)
 
     def freq_update(self): # Abfrage der Empfangsfrequenz
         if self.start_ft and self.control.connected:
-            bcd = self.control.bcd_abfrage()
-            print(bcd)
-            freq = self.control.bcd_to_freq(bcd)
-            print(freq)
-            return freq
+            bcd, bcd_err = self.control.bcd_abfrage()
+            print(f'bcd: {bcd} --- {bcd_err}')
+            if bcd_err is None:
+                freq, freq_err = self.control.bcd_to_freq(bcd)
+                print(f'freq: {freq} --- {freq_err}')
+                if freq_err is None:
+                    return freq
+            else:
+                return None
 
-    def freq_set(self, freqtx): # Setzen der Sendefrequenz im Funkgerät
+    def txfreq_set(self, freqtx): # Setzen der Sendefrequenz im Funkgerät
         if self.start_ft and self.control.connected:
             bcd=self.control.freq_to_bcd(freqtx)
-            self.control.freq_setzen(bcd)
+            self.control.txfreq_setzen(bcd)
 
     def frequenz_update_thread(self):
         freqrx_alt = 0
         print('start Thread')
         while self.start_ft and self.control.connected:
             freqrx = self.freq_update()
-            diff = freqrx - freqrx_alt
-            if self.control.freq_tracking:
-                if abs(diff) > 0:
-                    freqtx = freqrx + self.control.offset
-                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx, freqtx)
-                    self.freq_set(freqtx)
+            if freqrx is None:
+                self.stop_frequenz_update_thread()
             else:
-                self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
-            freqrx_alt = freqrx
-            for i in range(25):
-                if not self.start_ft or not self.control.connected:
-                    print('stop', i)
-                    break
-                time.sleep(0.01)
+                diff = freqrx - freqrx_alt
+                if self.control.freq_tracking:
+                    if abs(diff) > 0:
+                        freqtx = freqrx + self.control.offset
+                        self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx, freqtx)
+                        self.txfreq_set(freqtx)
+                else:
+                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
+                freqrx_alt = freqrx
+                for i in range(10):
+                    if not self.start_ft or not self.control.connected:
+                        print('stop', i)
+                        break
+                    time.sleep(0.01)
         print('Thread beendet')
 
     def hilfe(self):
         '''Generierung eines Hilfe- und Infofensters'''
         info = '''\
-Icom IC-705 Split Controller v0.x
+Icom IC-705 Split Controller v1.0.0
 Autor: Pascal Pfau (DH1PV)
 eMail: dh1pv@darc.de
 ©2025\n
@@ -503,7 +526,7 @@ und Software, sowie Datenverlussten, übernehme ich keinerlei haftung.\n
 Erste schritte:
 Nach dem Start als erstes den richtigen Seriellen Port auswählen. Meist in der Geräteverwaltung mit \
 CI-V gekennzeichnet. Danach auf Verbinden klicken. Jetzt wird die Aktuelle RX-Frequenz angezeigt. Zum \
-Nachführen der TX-Frequenz Tracking Start klicken. Nun wird auch die Aktuelle TX-Frequenz Angezeigt und \
+Nachführen der TX-Frequenz Tracking Start klicken. Nun wird auch die Aktuelle TX-Frequenz angezeigt und \
 automatisch anhand des aktuell eingestelltem Offsets gesetzt.
 Das Offset kann manuell in Herz eingegeben werden oder aber in einzelschritten, einstellbar unter \
 Schrittweite, mit "+" und "-" eingestellt werden.\n
