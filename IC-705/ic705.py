@@ -173,10 +173,17 @@ class CIV_Control:
             except Exception as e:
                 print(f'Fehler beim Frequenz setzen: {e}')
 
+    def abfrage_Ports(self):
+        ports = [p.device for p in serial.tools.list_ports.comports()]
+        if ports[0].startswith('COM'):
+            ports = sorted(ports, key=lambda x: int(x.replace('COM', '')))
+        else:
+            ports = sorted(ports, key=lambda x: int(x.replace(r'/dev/ttyS', '')))
+        return ports
+
 class CIV_GUI:
     def __init__(self):
         self.fenster = tk.Tk()
-        self.fenster.iconbitmap('ic705.ico')
         self.fenster.title('IC-705 CI-V Controll') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False)
         self.fenster.protocol('WM_DELETE_WINDOW', self.closeFenster)
@@ -250,7 +257,7 @@ class CIV_GUI:
         self.cbPorts_var = tk.StringVar()
         self.cbPorts = ttk.Combobox(self.frVerbinden,
                                     width=10,
-                                    values=self._abfrage_Ports(),
+                                    values=self.control.abfrage_Ports(),
                                     state='readonly',
                                     textvariable=self.cbPorts_var
                                     )
@@ -259,7 +266,7 @@ class CIV_GUI:
         self.cbPorts_var.set(str(self.control.serial_port))
 
         self.buPorts_refresh = tk.Button(self.frVerbinden,
-                                         command=lambda:self._abfrage_Ports(refresh=True),
+                                         command=self._refresh_ports,
                                          text=chr(0x27F3))
         self.buPorts_refresh.grid(row=0, column=2, padx=5, pady=0)
         self.buVerbinden = tk.Button(self.frVerbinden,
@@ -404,19 +411,12 @@ class CIV_GUI:
     def _cbPorts_auswahl(self, *args):
         self.control.serial_port = None if self.cbPorts_var.get() == 'None' else self.cbPorts_var.get()
 
+    def _refresh_ports(self):
+        ports = self.control.abfrage_Ports()
+        self.cbPorts.configure(values=ports)
+
     def _cbStep_auswahl(self,*args):
         self.control.step = self.cbStep.get()
-
-    def _abfrage_Ports(self, refresh=False):
-        ports = [p.device for p in serial.tools.list_ports.comports()]
-        if ports[0].startswith('COM'):
-            ports = sorted(ports, key=lambda x: int(x.replace('COM', '')))
-        else:
-            ports = sorted(ports, key=lambda x: int(x.replace(r'/dev/ttyS', '')))
-        if refresh:
-            self.cbPorts.configure(values=ports)
-        else:
-            return ports
 
     def _tracking_on(self):
         self.control.freq_tracking = True
