@@ -154,7 +154,7 @@ class CIV_Control:
                 qrg = ''.join(qrg_bytes) # Liste wieder umwandeln zu einem String
                 return int(qrg), None # Ausgabe der Frequenz in Hz als ganze Zahl
             except Exception as e:
-                print(f'Fehler bei der umwandlung bcd_to_freq: *** {e} ***')
+                print(f'Fehler bei der bcd umwandlung: *** {e} ***')
                 print(bcd)
                 return None, e
 
@@ -469,15 +469,25 @@ class CIV_GUI:
 
     def freq_update(self): # Abfrage der Empfangsfrequenz
         if self.start_ft and self.control.connected:
-            bcd, bcd_err = self.control.bcd_abfrage()
-            print(f'bcd: {bcd} --- {bcd_err}')
+            bcd = 'fe fe e0 a4 fb fd'
+            freq_err = None
+            bcd_err = None
+            while bcd == 'fe fe e0 a4 fb fd':
+                bcd, bcd_err = self.control.bcd_abfrage()
+                print(f'bcd: {bcd}')
             if bcd_err is None:
                 freq, freq_err = self.control.bcd_to_freq(bcd)
-                print(f'freq: {freq} --- {freq_err}')
+                print(f'freq: {freq}')
                 if freq_err is None:
                     return freq
-            else:
-                return None
+
+            msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
+            if bcd_err:
+                msg += f'\nbcd Fehler: {bcd_err}'
+            if freq_err:
+                msg += f'\nfreq Fehler: {freq_err}'
+            messagebox.showerror(title='Fehler', message=msg)
+            return None
 
     def txfreq_set(self, freqtx): # Setzen der Sendefrequenz im Funkgerät
         if self.start_ft and self.control.connected:
