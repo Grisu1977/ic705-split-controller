@@ -136,23 +136,20 @@ class CIV_Control:
             try:
                 self.ic705.reset_input_buffer()
                 self.ic705.write(cmd) # Abfrage
-                data = self.ic705.read_until(b'\xfd').hex(sep=' ') # empfang des unformatierten Datenstromes
+                data = self.ic705.read_until(b'\xfd')# empfang des unformatierten Datenstromes
                 return data, None
             except Exception as e:
                 print(f'Fehler bei der bcd Abfrage: *** {e} ***')
                 return None, e
 
-    def bcd_to_freq(self, bcd=str): # extration der Frequenz
+    def bcd_to_freq(self, bcd): # extration der Frequenz
             try:
-                ldata = bcd.split(' ') # erstellung einer Liste aus den Rohdaten
-                for i in range(len(ldata)-1, -1, -1): # suche nach dem letztem 'fd' (Ende Datenstring)
-                    if ldata[i] == 'fd':
-                        fd = i
-                        break
-                qrg_bytes = [ldata[i] for i in range(fd-5, fd)] # Extration der fünf Frequenzbytes
-                qrg_bytes.reverse() # Bytes in richtige reihenfolge bringen
-                qrg = ''.join(qrg_bytes) # Liste wieder umwandeln zu einem String
-                return int(qrg), None # Ausgabe der Frequenz in Hz als ganze Zahl
+                if bcd[len(bcd)-7] in (0x03, 0x00) and bcd[len(bcd)-1] == 0xfd:
+                    freq_bytes = bcd[len(bcd)-2:len(bcd)-7:-1] # Extration der 5 Frequenzbytes in richtiger reihenfolge
+                    freq = freq_bytes.hex() 
+                    return int(freq), None # Ausgabe der Frequenz in Hz als ganze Zahl
+                else:
+                    return None, None
             except Exception as e:
                 print(f'Fehler bei der bcd umwandlung: *** {e} ***')
                 print(bcd)
@@ -469,17 +466,19 @@ class CIV_GUI:
 
     def freq_update(self): # Abfrage der Empfangsfrequenz
         if self.start_ft and self.control.connected:
-            bcd = 'fe fe e0 a4 fb fd'
             freq_err = None
             bcd_err = None
-            while bcd == 'fe fe e0 a4 fb fd':
-                bcd, bcd_err = self.control.bcd_abfrage()
-                print(f'bcd: {bcd}')
-            if bcd_err is None:
-                freq, freq_err = self.control.bcd_to_freq(bcd)
-                print(f'freq: {freq}')
-                if freq_err is None:
-                    return freq
+            freq = None
+            while freq is None and freq_err is None:
+                bcd = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
+                while bcd == [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]:
+                    bcd, bcd_err = self.control.bcd_abfrage()
+                    print(f'bcd: {bcd.hex(' ')}')
+                if bcd_err is None:
+                    freq, freq_err = self.control.bcd_to_freq(bcd)
+                    print(f'freq: {freq}')
+                    if freq_err is None and freq:
+                        return freq
 
             msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
             if bcd_err:
