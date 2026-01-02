@@ -9,13 +9,16 @@ Einstellungen im TRX:
 - CI-V USB Echo Back muss 'off' sein
 Geplante Anpassungen:
 - [✓] Hilfefenster / Infofenster
-- [] Interaktionsmeldungen mit Messagebox
-- [] Verbesserung der Fehleranpassung (Try/except)
+- [✓] Interaktionsmeldungen mit Messagebox
+- [✓] Verbesserung der Fehleranpassung (Try/except)
+- [✓] Umbau der bcd-Parsings
 Zukünftige versionen:
+- [] Linux Implementierung
 - [] Optionale Speicherung der Fensterposition
 - [] Hinzufügen eines Tray-Icons
 - [] Manuelles setzen der TX/RX Frequenz mit berechnung und setzen der Offsetfrequenz
 - [] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
+- [] Einschalten des Splitbetriebs bei Tracking Start
 - [] Verbindung via WLAN
 '''
 
@@ -31,6 +34,10 @@ from pathlib import Path
 
 class CIV_Control:    
     def __init__(self):
+        '''
+        Initialisiert den Controller für den IC-705.
+        Setzt Standardwerte für Adressen, Frequenzen und Offset.
+        '''
         self.configfile = 'config.ini'
         self.freq_tracking = False
         self.connected = False
@@ -99,50 +106,47 @@ class CIV_Control:
                                   \rIst der Tranceiver eingeschaltet?\
                                   \rIst der Richtige Port gewählt?')
                 self.connected = True
-                print('Verbunden')
                 return True, None
             except serial.SerialTimeoutException as e:
                 self.ic705 = None
-                print(f'Verbindungsfehler * * * {e} * * *')
                 return False, e
             except Exception as e:
                 self.ic705 = None
-                print(f'Verbindungsfehler * * * {e} * * *')
                 return False, e
 
     def disconnect(self):
-        # Schließen der seriellen Schnittstelle
+        '''Schließen der seriellen Schnittstelle'''
         with self.lock:
             try:
                 self.ic705.close()
                 self.connected = False
-                print('Verbindung getrennt')
             except Exception as e:
                 print(f'Fehler beim Trennen: {e}')
 
     def _message(self, txrx, bcd=None):
+        '''Erstellen der CI-V Message'''
         msg=[]
-        if txrx == 'tx': # Generierung der Message zum setzen der Sendefrequenz im TRX
+        if txrx == 'tx': # Generierung der Message zum setzen der Sendefrequenz im TRX (Nicht aktiver VFO)
             msg = [0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, self.command_TX_freq[0], self.command_TX_freq[1], 0xfd]
             msg[6:6]=bcd
-        else: # Generierung der Message zur abfrage der Empfangsfrequenz
+        else: # Generierung der Message zur abfrage der Empfangsfrequenz (Aktiver VFO)
             msg = [0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, self.command_RX_freq, 0xfd]
-        return msg
+        return bytes(msg)
 
     def bcd_abfrage(self): # Binär Codierte Dezimalzahl
+        '''Abfrage der Betriebs-Frequenz'''
         with self.lock:
             msg = self._message('rx')
-            cmd = bytes(msg)
             try:
-                self.ic705.reset_input_buffer()
-                self.ic705.write(cmd) # Abfrage
-                data = self.ic705.read_until(b'\xfd')# empfang des unformatierten Datenstromes
+                self.ic705.reset_input_buffer() # Löschen des empfangsbuffers
+                self.ic705.write(msg) # Abfrage
+                data = self.ic705.read_until(b'\xfd') # Lesen des unformatierten Datenstromes
                 return data, None
             except Exception as e:
-                print(f'Fehler bei der bcd Abfrage: *** {e} ***')
                 return None, e
 
-    def bcd_to_freq(self, bcd): # extration der Frequenz
+    def bcd_to_freq(self, bcd):
+            '''Lesen und extrahieren der 5 Frequenz-Bytes'''
             try:
                 if bcd[len(bcd)-7] in (0x03, 0x00) and bcd[len(bcd)-1] == 0xfd:
                     freq_bytes = bcd[len(bcd)-2:len(bcd)-7:-1] # Extration der 5 Frequenzbytes in richtiger reihenfolge
@@ -151,26 +155,27 @@ class CIV_Control:
                 else:
                     return None, None
             except Exception as e:
-                print(f'Fehler bei der bcd umwandlung: *** {e} ***')
-                print(bcd)
                 return None, e
 
-    def freq_to_bcd(self, freq): # Aus der Frequenz wieder eine binär codierte Dezimalzahl machen
+    def freq_to_bcd(self, freq):
+        '''Konvertiert Frequenz in BCD-Format (5 Bytes für 10 Ziffern)'''
         freq = f'{freq:010d}' # Auffüllen mit nullen
-        freq_bytes = [int(freq[i]+freq[i+1],16) for i in range(0, len(freq)-1, 2)] # Generierung der bytes und schreiben in eine Liste
-        freq_bytes.reverse() # Bytes in richtige reihenfolge bringen
+        freq_bytes = [int(freq[i]+freq[i+1],16) for i in range(0, len(freq)-1, 2)] # Bildung BCD-Bytes: 2 Dezimalziffern = 1 Byte
+        freq_bytes.reverse() # BCD-Bytes, niederwertige Dezimalziffern zuerst
+
         return freq_bytes
 
-    def txfreq_setzen(self, bcd=list): # Setzen der Sendefrequenz. Nicht aktiver VFO
+    def txfreq_write(self, bcd):
+        '''Setzen der frequenz des nicht aktiven VFO'''
         with self.lock:
             msg = self._message('tx', bcd)
-            msg = bytes(msg)
             try:
                 self.ic705.write(msg)
             except Exception as e:
                 print(f'Fehler beim Frequenz setzen: {e}')
 
     def abfrage_Ports(self):
+        '''Abfrage "aller" aktiven Ports im System'''
         ports = [p.device for p in serial.tools.list_ports.comports()]
         if ports[0].startswith('COM'):
             ports = sorted(ports, key=lambda x: int(x.replace('COM', '')))
@@ -180,8 +185,12 @@ class CIV_Control:
 
 class CIV_GUI:
     def __init__(self):
+        '''
+        Initialisiert die GUI für den IC-705 Controller.
+        Erstellt alle UI-Elemente und startet den Controller.
+        '''
         self.fenster = tk.Tk()
-        self.fenster.title('IC-705 CI-V Controll') # Name Titelleiste Fenster / Programmname
+        self.fenster.title('IC-705 Split Controler') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False)
         self.fenster.protocol('WM_DELETE_WINDOW', self.closeFenster)
         self.control = CIV_Control()
@@ -205,6 +214,8 @@ class CIV_GUI:
 
         self.fenster.configure(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
 
+        '''Bau der Benutzeroberfläche'''
+        '''Titelframe'''
         self.frTitel = tk.Frame(self.fenster,
                                 background=self.bg_mittel,
                                 highlightbackground=self.rahmen_hell,
@@ -217,10 +228,10 @@ class CIV_GUI:
         self.frTitel.columnconfigure(1,weight=1)
         self.frTitel.rowconfigure(0, weight=1)
         self.lbTitel = tk.Label(self.frTitel,
-                                background=self.bg_mittel, # Hintergrund
+                                background=self.bg_mittel,
                                 text='Icom IC-705 Split Controler', # Name des Programms
                                 font=(None, 16, 'bold'),
-                                foreground=self.schrift) # Schriftfarbe
+                                foreground=self.schrift)
         self.lbTitel.grid(row=0, column=0)
         self.frTitel_re = tk.Frame(self.frTitel, background=self.bg_mittel)
         self.frTitel_re.grid(row=0, column=1, sticky='e')
@@ -242,6 +253,7 @@ class CIV_GUI:
                                  activebackground=self.bg_mittel)
         self.buHilfe.grid(row=0, column=1)
 
+        '''Steuerelemente Verbinden und Tracking'''
         self.frVerbinden = tk.Frame(self.fenster, background=self.bg_dunkel)
         self.frVerbinden.grid(row=1, column=0, padx=5, pady=2, sticky='w')
         self.lbPorts = tk.Label(self.frVerbinden,
@@ -256,8 +268,7 @@ class CIV_GUI:
                                     width=10,
                                     values=self.control.abfrage_Ports(),
                                     state='readonly',
-                                    textvariable=self.cbPorts_var
-                                    )
+                                    textvariable=self.cbPorts_var)
         self.cbPorts.grid(row=0, column=1, padx=5, pady=0)
         self.cbPorts_var.trace_add('write', self._cbPorts_auswahl)
         self.cbPorts_var.set(str(self.control.serial_port))
@@ -281,6 +292,7 @@ class CIV_GUI:
                                     command=self._tracking_on)
         self.buTracking.grid(row=0, column=4, padx=5, pady=0)
 
+        '''Anzeigeelemente für RX und TX'''
         self.frAnzeige = tk.Frame(self.fenster,
                                   background=self.bg_mittel,
                                   highlightbackground=self.rahmen_hell,
@@ -323,6 +335,7 @@ class CIV_GUI:
                                      height=1)
         self.lbTX_Anzeige.grid(row=1, column=1, padx=2, pady=2, sticky='ew')
 
+        '''Einstellelemente für Offset'''
         self.frOffset = tk.Frame(self.fenster,
                                  background=self.bg_mittel,
                                  highlightbackground=self.rahmen_hell,
@@ -381,80 +394,98 @@ class CIV_GUI:
         self.cbStep.bind('<<ComboboxSelected>>', self._cbStep_auswahl)
 
     def _filter_etOffset(self, value):
+        '''Filtern der Benutzereingaben'''
         return value == '' or value == '-' or value.lstrip("-").isdigit()
 
-    def _commit_etOffset(self, event=None):
+    def _commit_etOffset(self, event=None): # event wird von bind immer mitgeliefert aber hier nicht verwendet
+        '''einstellen des Benutzeroffset'''
         raw_etOffset = self.etOffset_var.get()
         try:
             value_etOffst = int(raw_etOffset)
             if -1_000_000_000 < value_etOffst < 1_000_000_000:
                 self.control.offset=value_etOffst
-                self.refresh_lbRXTX_Anzeige()
+                self.refresh_lbRXTX_Anzeige() # Aktualliesierung der Anzeige
             else:
                 raise ValueError
         except ValueError as e:
             self.etOffset.focus_set()
             self.etOffset.select_range(0, tk.END)
-            print(e)
+            messagebox.showerror(title='Fehler', message='Bitte eine gültige Frequenz in Herz eingeben\nNur Ziffern 0 ... 9')
             return "break"
 
     def _etOffset_pm(self, plusminus):
+        '''Feinjustierung des Offsets'''
         var = int(self.etOffset_var.get())
         step = int(self.control.step)
-        self.etOffset_var.set(var + step * plusminus)
+        self.etOffset_var.set(var + step * plusminus) # einstellen der richtung Plus / Minus
         self.control.offset=int(self.etOffset_var.get())
-        self.refresh_lbRXTX_Anzeige()
+        self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
 
     def _cbPorts_auswahl(self, *args):
+        '''einstellen eines Ports'''
         self.control.serial_port = None if self.cbPorts_var.get() == 'None' else self.cbPorts_var.get()
 
     def _refresh_ports(self):
+        '''Aktuallisierung der Ports'''
         ports = self.control.abfrage_Ports()
         self.cbPorts.configure(values=ports)
 
     def _cbStep_auswahl(self,*args):
+        '''Auswahl der Offset schrittweite'''
         self.control.step = self.cbStep.get()
 
     def _tracking_on(self):
+        '''Aktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
         self.control.freq_tracking = True
         self.buTracking.config(background="#ffdd00", text='Tracking Stop', command=self._tracking_off)
-        self.refresh_lbRXTX_Anzeige()
+        self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
 
     def _tracking_off(self):
+        '''Deaktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
         self.control.freq_tracking = False
         self.buTracking.config(background="#0000ff", text='Tracking Start', command=self._tracking_on)
-        self.lbTX_Anzeige_text.set(value='off')
+        self.lbTX_Anzeige_text.set(value='off') # TX-Anzeige auf 'off' schalten
 
     def start_frequenz_update_thread(self):
+        '''Starten der kontinuirlichen Frequenzabfrage'''
         if not self.start_ft:
             connect, err = self.control.connect()
             if not connect:
                 messagebox.showerror(title='Verbindungsfehler', message=err)
             else:
-                self.ft = threading.Thread(target=self.frequenz_update_thread, daemon=True)            
+                self.ft = threading.Thread(target=self.frequenz_update_thread, daemon=True) 
                 self.start_ft = True
+                '''Einstellen der Bedienelemente'''
                 self.buVerbinden.config(text='Trennen', command=self.stop_frequenz_update_thread, background='#ff0000')
                 self.status_indikator.itemconfig(self.status_indikator_oval, fill='#00ff00')
                 self.buTracking.config(state='normal')
-                self.ft.start()
+                self.cbPorts.config(state='disabled')
+                self.buPorts_refresh.config(state='disabled')
+                self.ft.start() # Start des Threads
 
     def stop_frequenz_update_thread(self):
+        '''Stoppen der kontinuirlichen Frequenzabfrage'''
         self.start_ft = False
         if self.control.freq_tracking:
             self._tracking_off()
         self.control.disconnect()
+        '''Einstellen der Bedienelemente'''
+        self.cbPorts.config(state='readonly')
+        self.buPorts_refresh.config(state='normal')
         self.buTracking.config(state='disabled')
         self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
-        self.lbRX_Anzeige_text.set(value='off')
+        self.lbRX_Anzeige_text.set(value='off') # Anzeige auf "off" stellen
 
     def refresh_lbRXTX_Anzeige(self):
+        '''Aktuallisiert die TX-Anzeige'''
         if self.start_ft and self.control.freq_tracking:
             rx = self.freq_update()
             tx = rx + self.control.offset
             self.update_lbRXTX_Anzeige(freqrx=rx, freqtx=tx, refresh=True)
 
     def update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh = False):
+        '''Anzeige der Frequenzen'''
         if self.start_ft and self.control.connected:
             mhzrx = freqrx / 1_000_000
             self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
@@ -464,16 +495,19 @@ class CIV_GUI:
                 if refresh:
                     self.txfreq_set(freqtx)
 
-    def freq_update(self): # Abfrage der Empfangsfrequenz
+    def freq_update(self):
+        '''Abfrage der RX-Frequenz für die Anzeige und Berechnung der TX-Frequenz'''
         if self.start_ft and self.control.connected:
             freq_err = None
             bcd_err = None
             freq = None
             while freq is None and freq_err is None:
                 bcd = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
-                while bcd == [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]:
+                while bcd[4] == 0xfb:
                     bcd, bcd_err = self.control.bcd_abfrage()
-                    print(f'bcd: {bcd.hex(' ')}')
+                    if bcd[4] == 0xfb:
+                        pass
+                    print(f'bcd: {bcd}')
                 if bcd_err is None:
                     freq, freq_err = self.control.bcd_to_freq(bcd)
                     print(f'freq: {freq}')
@@ -488,34 +522,34 @@ class CIV_GUI:
             messagebox.showerror(title='Fehler', message=msg)
             return None
 
-    def txfreq_set(self, freqtx): # Setzen der Sendefrequenz im Funkgerät
+    def txfreq_set(self, freqtx):
+        '''Setzen der Sendefrequenz (Nicht Aktiver VFO) im Funkgerät'''
         if self.start_ft and self.control.connected:
-            bcd=self.control.freq_to_bcd(freqtx)
-            self.control.txfreq_setzen(bcd)
+            bcd = self.control.freq_to_bcd(freqtx)
+            self.control.txfreq_write(bcd)
 
     def frequenz_update_thread(self):
+        '''Updateschleife für Anzeige und Tracking'''
         freqrx_alt = 0
-        print('start Thread')
         while self.start_ft and self.control.connected:
             freqrx = self.freq_update()
             if freqrx is None:
-                self.stop_frequenz_update_thread()
+                self.stop_frequenz_update_thread() # Bei Fehler Stopp des UpdateThreads
             else:
                 diff = freqrx - freqrx_alt
-                if self.control.freq_tracking:
-                    if abs(diff) > 0:
-                        freqtx = freqrx + self.control.offset
+                if abs(diff) > 0: # einstellen der TX-Frequenz nur wenn es differenz gibt
+                    if self.control.freq_tracking:
+                        freqtx = freqrx + self.control.offset # berechnung der TX-Frequenz
                         self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx, freqtx)
                         self.txfreq_set(freqtx)
-                else:
-                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
+                    else:
+                        self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
                 freqrx_alt = freqrx
                 for i in range(10):
-                    if not self.start_ft or not self.control.connected:
-                        print('stop', i)
+                    '''Warteschleife'''
+                    if not self.start_ft or not self.control.connected: # überprüfung auf abbruch beim warten
                         break
                     time.sleep(0.01)
-        print('Thread beendet')
 
     def hilfe(self):
         '''Generierung eines Hilfe- und Infofensters'''
@@ -523,12 +557,16 @@ class CIV_GUI:
 Icom IC-705 Split Controller v1.0.0
 Autor: Pascal Pfau (DH1PV)
 eMail: dh1pv@darc.de
-©2025\n
+©2026\n
 Funktionen:
 - Frequenznachführung für Crossbandbetrieb
 - Offset-Korrektur
 - Feinabstimmung der TX-Frequenz
 - Speicherung der Einstellungen\n
+Release Notes:
+02-01-2026
+- Erste Version
+
 Disclaimer:
 Die benutzung des Programms geschied auf eigene Gefahr. Für Schäden an Geräten (Computer, TRX, etc.) \
 und Software, sowie Datenverlussten, übernehme ich keinerlei haftung.\n
@@ -546,7 +584,7 @@ und bei nutzung via Bluetooth
 MENU >> Bluetooth Set >> Data Device Set >> Serialport Funktion = CI-V (Echo Back OFF)
 eingestellt ist.\
 '''
-
+        '''Bau des Infofensters'''
         fensterHilfe = tk.Toplevel(self.fenster, background=self.bg_dunkel)
         fensterHilfe.title('Info / Hilfe')
         fensterHilfe.resizable(0,0)
@@ -577,15 +615,12 @@ eingestellt ist.\
         fensterHilfe.geometry(f'{width}x{height}+{x}+{round(y)}')
 
     def closeFenster(self):
+        '''Schließen / Beenden des Programms'''
         if self.start_ft:
             self.stop_frequenz_update_thread()
-            print('nach stop_frequenz_update')
         self.fenster.destroy()
-        print('fenster geschlossen')
         self.control.config_schreiben()
-        print('Config.ini Geschrieben')
 
 
 gui=CIV_GUI()
 gui.fenster.mainloop()
-print('Programm ENDE')
