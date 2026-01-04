@@ -168,13 +168,42 @@ class CIV_Control:
 
     def txfreq_write(self, bcd):
         '''Setzen der frequenz des nicht aktiven VFO'''
-        with self.lock:
-            msg = self._message('tx', bcd)
-            try:
-                self.ic705.write(msg)
-            except Exception as e:
-                print(f'Fehler beim Frequenz setzen: {e}')
+        tx_xfc, err = self.is_tx_xfc_enable()
+        if not tx_xfc:
+            with self.lock:
+                try:
+                    if err:
+                        raise Exception(err)
+                    msg_tx = self._message('set', bcd)
+                    self.ic705.write(msg_tx)
+                except Exception as e:
+                    print(f'Fehler beim Frequenz setzen: {e}')
 
+    def is_tx_xfc_enable(self):
+        err = None
+        tx_xfc = False
+        tx = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
+        xfc = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
+        while None in (tx, xfc) or 0xfb in (tx[4], xfc[4]):
+            tx, errtx = self.bcd_abfrage('tx')
+            xfc, errxfc = self.bcd_abfrage('xfc')
+            if not errtx is None:
+                err = f'TX: {errtx}'
+            if not errxfc is None:
+                err = f'XFC: {errxfc}' if err is None else err + f'\nXFC: {errxfc}'
+            if err:
+                return None, err
+            try:
+                if tx[6] == 0x00 and xfc[6] == 0x00:
+                    tx_xfc = False
+                elif tx[6] == 0x01 or xfc[6] == 0x01:
+                    tx_xfc = True
+                else:
+                    continue
+            except Exception as err:
+                return None, err
+        return tx_xfc, None
+      
     def abfrage_Ports(self):
         '''Abfrage "aller" aktiven Ports im System'''
         ports = [p.device for p in serial.tools.list_ports.comports()]
@@ -544,7 +573,7 @@ class CIV_GUI:
                     else:
                         self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
                 freqrx_alt = freqrx
-                for i in range(10):
+                for i in range(33):
                     '''Warteschleife'''
                     if not self.start_ft or not self.control.connected: # überprüfung auf abbruch beim warten
                         break
