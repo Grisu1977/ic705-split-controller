@@ -122,14 +122,17 @@ class CIV_Control:
             except Exception as e:
                 print(f'Fehler beim Trennen: {e}')
 
-    def _message(self, txrx, bcd=None):
+    def _message(self, cmd, bcd=None):
         '''Erstellen der CI-V Message'''
-        msg=[]
-        if txrx == 'tx': # Generierung der Message zum setzen der Sendefrequenz im TRX (Nicht aktiver VFO)
-            msg = [0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, self.command_TX_freq[0], self.command_TX_freq[1], 0xfd]
-            msg[6:6]=bcd
-        else: # Generierung der Message zur abfrage der Empfangsfrequenz (Aktiver VFO)
-            msg = [0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, self.command_RX_freq, 0xfd]
+        msg=[0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd]
+        if cmd == 'set': # Generierung der Message zum setzen der Sendefrequenz im TRX (Nicht aktiver VFO)
+            msg[4:4] = [0x25, 0x01] + bcd
+        elif cmd == 'read': # Generierung der Message zur abfrage der Empfangsfrequenz (Aktiver VFO)
+            msg[4:4] = [0x03]
+        elif cmd == 'tx':
+            msg[4:4] = [0x1c, 0x00]
+        elif cmd == 'xfc':
+            msg[4:4] = [0x1c, 0x02]
         return bytes(msg)
 
     def bcd_abfrage(self, cmd): # Binär Codierte Dezimalzahl
