@@ -2,7 +2,6 @@
 Docstring
 Icom IC-705 Split Controller
 Autor: Pascal Pfau (DH1PV)
-Version: 1.0.0
 Benötigte Bibliotheken:
 - pip install pyserial
 Einstellungen im TRX:
@@ -12,13 +11,14 @@ Geplante Anpassungen:
 - [✓] Interaktionsmeldungen mit Messagebox
 - [✓] Verbesserung der Fehleranpassung (Try/except)
 - [✓] Umbau der bcd-Parsings
+- [] Unterdrückung der Frequenzaktuallisierung wärend des Sendens
 Zukünftige versionen:
 - [] Linux Implementierung
 - [] Optionale Speicherung der Fensterposition
 - [] Hinzufügen eines Tray-Icons
 - [] Manuelles setzen der TX/RX Frequenz mit berechnung und setzen der Offsetfrequenz
 - [] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
-- [] Einschalten des Splitbetriebs bei Tracking Start
+- [] Einschalten des Splitbetriebs bei Tracking Start (Optional Split Ja / Nein)
 - [] Verbindung via WLAN
 '''
 
@@ -32,6 +32,8 @@ import threading
 import configparser
 from pathlib import Path
 
+version = '1.0.1'
+
 class CIV_Control:    
     def __init__(self):
         '''
@@ -42,14 +44,11 @@ class CIV_Control:
         self.freq_tracking = False
         self.connected = False
         self.lock = threading.Lock()
-        # Default-Werte werden durch die Werte aus der 'config.ini' überschrieben
         self.serial_port = None # Serielle schnittstelle (Default)
         self.baud_rate = 19200 # Default TRX-Baudrate
         self.time_out = 0.1 # Timeout beim Connect zum TRX via Pyserial
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
         self.controller_Adresse = 0xe0 # Muss in der regel nicht angepasst werden
-        self.command_RX_freq = 0x03 # Hex CI-V Komando für die Frequenzabfrage (aktiver VFO)
-        self.command_TX_freq = 0x25, 0x01 # Hex CI-V Komando für das setzen der TX-Frequenz (nicht aktiver VFO)
         self.offset = 287_500_000 # Default Offset für QO-100
         self.step = 10 # Default Schrittweite für manuelles nachjustieren
 
@@ -133,10 +132,10 @@ class CIV_Control:
             msg = [0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, self.command_RX_freq, 0xfd]
         return bytes(msg)
 
-    def bcd_abfrage(self): # Binär Codierte Dezimalzahl
+    def bcd_abfrage(self, cmd): # Binär Codierte Dezimalzahl
         '''Abfrage der Betriebs-Frequenz'''
         with self.lock:
-            msg = self._message('rx')
+            msg = self._message(cmd)
             try:
                 self.ic705.reset_input_buffer() # Löschen des empfangsbuffers
                 self.ic705.write(msg) # Abfrage
@@ -162,7 +161,6 @@ class CIV_Control:
         freq = f'{freq:010d}' # Auffüllen mit nullen
         freq_bytes = [int(freq[i]+freq[i+1],16) for i in range(0, len(freq)-1, 2)] # Bildung BCD-Bytes: 2 Dezimalziffern = 1 Byte
         freq_bytes.reverse() # BCD-Bytes, niederwertige Dezimalziffern zuerst
-
         return freq_bytes
 
     def txfreq_write(self, bcd):
@@ -179,8 +177,6 @@ class CIV_Control:
         ports = [p.device for p in serial.tools.list_ports.comports()]
         if ports[0].startswith('COM'):
             ports = sorted(ports, key=lambda x: int(x.replace('COM', '')))
-        else:
-            ports = sorted(ports, key=lambda x: int(x.replace(r'/dev/ttyS', '')))
         return ports
 
 class CIV_GUI:
@@ -265,7 +261,7 @@ class CIV_GUI:
 
         self.cbPorts_var = tk.StringVar()
         self.cbPorts = ttk.Combobox(self.frVerbinden,
-                                    width=10,
+                                    width=12,
                                     values=self.control.abfrage_Ports(),
                                     state='readonly',
                                     textvariable=self.cbPorts_var)
@@ -480,9 +476,9 @@ class CIV_GUI:
     def refresh_lbRXTX_Anzeige(self):
         '''Aktuallisiert die TX-Anzeige'''
         if self.start_ft and self.control.freq_tracking:
-            rx = self.freq_update()
-            tx = rx + self.control.offset
-            self.update_lbRXTX_Anzeige(freqrx=rx, freqtx=tx, refresh=True)
+            freq_rx = self.freq_update()
+            freq_tx = freq_rx + self.control.offset
+            self.update_lbRXTX_Anzeige(freqrx=freq_rx, freqtx=freq_tx, refresh=True)
 
     def update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh = False):
         '''Anzeige der Frequenzen'''
@@ -498,27 +494,27 @@ class CIV_GUI:
     def freq_update(self):
         '''Abfrage der RX-Frequenz für die Anzeige und Berechnung der TX-Frequenz'''
         if self.start_ft and self.control.connected:
-            freq_err = None
-            bcd_err = None
             freq = None
-            while freq is None and freq_err is None:
-                bcd = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
-                while bcd[4] == 0xfb:
-                    bcd, bcd_err = self.control.bcd_abfrage()
-                    if bcd[4] == 0xfb:
-                        pass
-                    print(f'bcd: {bcd}')
-                if bcd_err is None:
-                    freq, freq_err = self.control.bcd_to_freq(bcd)
+            freq_err = None
+            bcd_err_read = None
+            while freq is None and bcd_err_read is None and freq_err is None:
+                bcd_read = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
+                while 0xfb in bcd_read:
+                    bcd_read, bcd_err_read = self.control.bcd_abfrage('read')
+                    if bcd_err_read:
+                        break
+                    print(f'bcd_read: {bcd_read}')
+                if bcd_err_read is None:
+                    freq, freq_err = self.control.bcd_to_freq(bcd_read)
                     print(f'freq: {freq}')
                     if freq_err is None and freq:
                         return freq
 
             msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
-            if bcd_err:
-                msg += f'\nbcd Fehler: {bcd_err}'
+            if bcd_err_read:
+                msg += f'\nBCD Fehler (read): {bcd_err_read}'
             if freq_err:
-                msg += f'\nfreq Fehler: {freq_err}'
+                msg += f'\nFrequenz Fehler: {freq_err}'
             messagebox.showerror(title='Fehler', message=msg)
             return None
 
@@ -553,8 +549,8 @@ class CIV_GUI:
 
     def hilfe(self):
         '''Generierung eines Hilfe- und Infofensters'''
-        info = '''\
-Icom IC-705 Split Controller v1.0.0
+        info = f'''\
+Icom IC-705 Split Controller v{version}
 Autor: Pascal Pfau (DH1PV)
 eMail: dh1pv@darc.de
 ©2026\n
