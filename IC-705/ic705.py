@@ -96,8 +96,7 @@ class CIV_Control:
             try:
                 self.ic705 = serial.Serial(port=self.serial_port, baudrate=self.baud_rate, timeout=self.time_out, write_timeout=2)
                 '''überprüfung ob verbindung korreckt hergestellt worden ist und ob gerät auch korrekt antwortet'''
-                self.ic705.write([0xfe,0xfe,0xa4,0xe0,0x03,0xfd])
-                time.sleep(0.05)
+                self.ic705.write(self._message('vfo_a'))
                 dataTest = self.ic705.read_until()
                 if len(dataTest) < 7:
                     self.ic705.close()
@@ -125,40 +124,64 @@ class CIV_Control:
     def _message(self, cmd, bcd=None):
         '''Erstellen der CI-V Message'''
         msg=[0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd]
-        if cmd == 'set': # Generierung der Message zum setzen der Sendefrequenz im TRX (Nicht aktiver VFO)
+        if cmd == 'set': # Setzen Frequenz im TRX (Nicht aktiver VFO)
             msg[4:4] = [0x25, 0x01] + bcd
-        elif cmd == 'read': # Generierung der Message zur abfrage der Empfangsfrequenz (Aktiver VFO)
-            msg[4:4] = [0x03]
-        elif cmd == 'tx':
+        elif cmd == 'vfo_a': # Abfrage Frequenz (Aktiver VFO)
+            msg[4:4] = [0x25,0x00]
+        elif cmd == 'vfo_b': # Abfrage Frequenz (Nicht aktiver VFO)
+            msg[4:4] = [0x25,0x01]
+        elif cmd == 'tx': # is TX / RX 
             msg[4:4] = [0x1c, 0x00]
-        elif cmd == 'xfc':
+        elif cmd == 'xfc': # is XTC
             msg[4:4] = [0x1c, 0x02]
+        elif cmd == 'mode': # Mode + Filter (usb, lsb, cw, ...)
+            msg[4:4] = [0x04]
+        elif cmd == 'data': # Data on / off + Filter
+            msg[4:4] = [0x1a, 0x06]
+        elif cmd == 'split': # is Split on / off
+            msg[4:4] = [0x0f]
         return bytes(msg)
 
-    def bcd_abfrage(self, cmd): # Binär Codierte Dezimalzahl
-        '''Abfrage der Betriebs-Frequenz'''
+    def bcd_abfrage(self, cmd:list):
+        '''Abfrage Binär Codierte Dezimalzahl'''
         with self.lock:
-            msg = self._message(cmd)
             try:
                 self.ic705.reset_input_buffer() # Löschen des empfangsbuffers
-                self.ic705.write(msg) # Abfrage
-                data = self.ic705.read_until(b'\xfd') # Lesen des unformatierten Datenstromes
+                for c in cmd:
+                    msg = self._message(c)
+                    self.ic705.write(msg) # Abfrage
+                time.sleep(0.1)
+                data = self.ic705.read(self.ic705.in_waiting) # Lesen des unformatierten Datenstromes
                 return data, None
             except Exception as e:
                 return None, e
 
-    def bcd_to_freq(self, bcd):
+    def bcd_to_freq(self, bcd:bytes):
             '''Lesen und extrahieren der 5 Frequenz-Bytes'''
+            find_rx = bytes([0xfe,0xfe,self.controller_Adresse,self.trx_Adresse,0x25,0x00])
+            find_tx = bytes([0xfe,0xfe,self.controller_Adresse,self.trx_Adresse,0x25,0x01])
+            freq_rx = None
+            freq_tx = None
             try:
-                if bcd[len(bcd)-7] in (0x03, 0x00) and bcd[len(bcd)-1] == 0xfd:
-                    freq_bytes = bcd[len(bcd)-2:len(bcd)-7:-1] # Extration der 5 Frequenzbytes in richtiger reihenfolge
-                    freq = freq_bytes.hex() 
-                    return int(freq), None # Ausgabe der Frequenz in Hz als ganze Zahl
+                f_rx = bcd.find(find_rx)
+                f_tx = bcd.find(find_tx)
+                if bcd.find(bytes([0xfe,0xfe,self.controller_Adresse,self.trx_Adresse,0xfa,0xfd])) != -1:
+                    raise serial.SerialException('No response from TRX (power off or CI-V inactive)')
+                if f_rx != -1 and bcd[f_rx + 11] == 0xfd:
+                    freq_rx = bcd[f_rx+10:f_rx+5:-1]
+                    freq_rx = freq_rx.hex()
+                if self.freq_tracking and f_tx != -1 and bcd[f_tx + 11] ==0xfd:
+                    freq_tx = bcd[f_tx+10:f_tx+5:-1]
+                    freq_tx = freq_tx.hex()
+                if freq_rx and freq_tx:
+                    return int(freq_rx), int(freq_tx), None # Ausgabe der Frequenz in Hz als ganze Zahl
+                elif freq_rx:
+                    return int(freq_rx), None, None # Ausgabe der Frequenz in Hz als ganze Zahl
                 else:
-                    return None, None
+                    return None, None, None
             except Exception as e:
-                return None, e
-
+                return None, None, e
+            
     def freq_to_bcd(self, freq):
         '''Konvertiert Frequenz in BCD-Format (5 Bytes für 10 Ziffern)'''
         freq = f'{freq:010d}' # Auffüllen mit nullen
@@ -168,41 +191,15 @@ class CIV_Control:
 
     def txfreq_write(self, bcd):
         '''Setzen der frequenz des nicht aktiven VFO'''
-        tx_xfc, err = self.is_tx_xfc_enable()
-        if not tx_xfc:
-            with self.lock:
-                try:
-                    if err:
-                        raise Exception(err)
-                    msg_tx = self._message('set', bcd)
-                    self.ic705.write(msg_tx)
-                except Exception as e:
-                    print(f'Fehler beim Frequenz setzen: {e}')
-
-    def is_tx_xfc_enable(self):
-        err = None
-        tx_xfc = False
-        tx = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
-        xfc = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
-        while None in (tx, xfc) or 0xfb in (tx[4], xfc[4]):
-            tx, errtx = self.bcd_abfrage('tx')
-            xfc, errxfc = self.bcd_abfrage('xfc')
-            if not errtx is None:
-                err = f'TX: {errtx}'
-            if not errxfc is None:
-                err = f'XFC: {errxfc}' if err is None else err + f'\nXFC: {errxfc}'
-            if err:
-                return None, err
+        with self.lock:
             try:
-                if tx[6] == 0x00 and xfc[6] == 0x00:
-                    tx_xfc = False
-                elif tx[6] == 0x01 or xfc[6] == 0x01:
-                    tx_xfc = True
-                else:
-                    continue
-            except Exception as err:
-                return None, err
-        return tx_xfc, None
+                msg_tx = self._message('set', bcd)
+                self.ic705.write(msg_tx)
+            except Exception as e:
+                print(f'Fehler beim Frequenz setzen: {e}')
+
+    def is_tx_enable(self):
+        pass
       
     def abfrage_Ports(self):
         '''Abfrage "aller" aktiven Ports im System'''
