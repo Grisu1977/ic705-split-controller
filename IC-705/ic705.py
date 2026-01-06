@@ -32,7 +32,7 @@ import threading
 import configparser
 from pathlib import Path
 
-version = '1.0.1'
+version = '1.1.0'
 
 class CIV_Control:    
     def __init__(self):
@@ -505,9 +505,8 @@ class CIV_GUI:
     def refresh_lbRXTX_Anzeige(self):
         '''Aktuallisiert die TX-Anzeige'''
         if self.start_ft and self.control.freq_tracking:
-            freq_rx = self.freq_update()
-            freq_tx = freq_rx + self.control.offset
-            self.update_lbRXTX_Anzeige(freqrx=freq_rx, freqtx=freq_tx, refresh=True)
+            freq = self.freq_update()
+            self.update_lbRXTX_Anzeige(freqrx=freq[0], freqtx=freq[1], refresh=True)
 
     def update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh = False):
         '''Anzeige der Frequenzen'''
@@ -518,33 +517,29 @@ class CIV_GUI:
                 mhztx = freqtx / 1_000_000
                 self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
                 if refresh:
-                    self.txfreq_set(freqtx)
+                    self.txfreq_set(freqrx+self.control.offset)
 
     def freq_update(self):
         '''Abfrage der RX-Frequenz für die Anzeige und Berechnung der TX-Frequenz'''
         if self.start_ft and self.control.connected:
-            freq = None
+            freq_rx = None
             freq_err = None
-            bcd_err_read = None
-            while freq is None and bcd_err_read is None and freq_err is None:
-                bcd_read = [0xfe, 0xfe, 0xe0, 0xa4, 0xfb, 0xfd]
-                while 0xfb in bcd_read:
-                    bcd_read, bcd_err_read = self.control.bcd_abfrage('read')
-                    if bcd_err_read:
-                        break
-                    print(f'bcd_read: {bcd_read}')
-                if bcd_err_read is None:
-                    freq, freq_err = self.control.bcd_to_freq(bcd_read)
-                    print(f'freq: {freq}')
-                    if freq_err is None and freq:
-                        return freq
+            bcd_err = None
+            while freq_rx is None and bcd_err is None and freq_err is None:
+                bcd, bcd_err = self.control.bcd_abfrage(cmd=['vfo_a', 'vfo_b'])
+                print(f'bcd_read: {bcd.hex(' ')}')
+                if bcd_err is None:
+                    freq_rx, freq_tx, freq_err = self.control.bcd_to_freq(bcd)
+                    print(f'freq: {freq_rx} *** {freq_tx}')
+                    if freq_err is None and freq_rx:
+                        return [freq_rx, freq_tx]
 
             msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
-            if bcd_err_read:
-                msg += f'\nBCD Fehler (read): {bcd_err_read}'
+            if bcd_err:
+                msg += f'\nBCD Fehler (read): {bcd_err}'
             if freq_err:
                 msg += f'\nFrequenz Fehler: {freq_err}'
-            messagebox.showerror(title='Fehler', message=msg)
+            self.fenster.after(0, lambda: messagebox.showerror(title='Fehler', message=msg))
             return None
 
     def txfreq_set(self, freqtx):
@@ -557,20 +552,20 @@ class CIV_GUI:
         '''Updateschleife für Anzeige und Tracking'''
         freqrx_alt = 0
         while self.start_ft and self.control.connected:
-            freqrx = self.freq_update()
-            if freqrx is None:
+            freq = self.freq_update()
+            if freq is None:
                 self.stop_frequenz_update_thread() # Bei Fehler Stopp des UpdateThreads
             else:
-                diff = freqrx - freqrx_alt
-                if abs(diff) > 0: # einstellen der TX-Frequenz nur wenn es differenz gibt
-                    if self.control.freq_tracking:
-                        freqtx = freqrx + self.control.offset # berechnung der TX-Frequenz
-                        self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx, freqtx)
+                diff = freq[0] - freqrx_alt
+                if self.control.freq_tracking:
+                    freqtx = freq[0] + self.control.offset # berechnung der TX-Frequenz
+                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freq[0], freq[1])
+                    if abs(diff) > 0: # einstellen der TX-Frequenz nur wenn es differenz gibt
                         self.txfreq_set(freqtx)
-                    else:
-                        self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freqrx)
-                freqrx_alt = freqrx
-                for i in range(33):
+                else:
+                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freq[0])
+                freqrx_alt = freq[0]
+                for i in range(10):
                     '''Warteschleife'''
                     if not self.start_ft or not self.control.connected: # überprüfung auf abbruch beim warten
                         break
