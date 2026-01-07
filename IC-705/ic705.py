@@ -150,6 +150,7 @@ class CIV_Control:
                 for c in cmd:
                     msg = self._message(c)
                     self.ic705.write(msg) # Abfrage
+                    time.sleep(0.01)
                 time.sleep(0.1)
                 data = self.ic705.read(self.ic705.in_waiting) # Lesen des unformatierten Datenstromes
                 return data, None
@@ -513,7 +514,7 @@ class CIV_GUI:
         if self.start_ft and self.control.connected:
             mhzrx = freqrx / 1_000_000
             self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
-            if self.control.freq_tracking and not freqtx is None:
+            if self.control.freq_tracking and freqtx is not None:
                 mhztx = freqtx / 1_000_000
                 self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
                 if refresh:
@@ -548,22 +549,26 @@ class CIV_GUI:
             bcd = self.control.freq_to_bcd(freqtx)
             self.control.txfreq_write(bcd)
 
+    def calc_txfreq(self, rx, rx_alt):
+        diff = rx - rx_alt
+        if not self.control.freq_tracking or abs(diff) == 0:
+            return None    
+        tx = rx + self.control.offset # berechnung der TX-Frequenz
+        return tx
+
     def frequenz_update_thread(self):
         '''Updateschleife für Anzeige und Tracking'''
         freqrx_alt = 0
         while self.start_ft and self.control.connected:
             freq = self.freq_update()
             if freq is None:
-                self.stop_frequenz_update_thread() # Bei Fehler Stopp des UpdateThreads
+                self.fenster.after(0, self.stop_frequenz_update_thread) # Bei Fehler Stopp des UpdateThreads
+                break
             else:
-                diff = freq[0] - freqrx_alt
-                if self.control.freq_tracking:
-                    freqtx = freq[0] + self.control.offset # berechnung der TX-Frequenz
-                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freq[0], freq[1])
-                    if abs(diff) > 0: # einstellen der TX-Frequenz nur wenn es differenz gibt
-                        self.txfreq_set(freqtx)
-                else:
-                    self.lbRX_Anzeige.after(0, self.update_lbRXTX_Anzeige, freq[0])
+                freqtx = self.calc_txfreq(freq[0], freqrx_alt)
+                if freqtx is not None:
+                    self.txfreq_set(freqtx)
+                self.fenster.after(0, self.update_lbRXTX_Anzeige, freq[0], freq[1])
                 freqrx_alt = freq[0]
                 for i in range(10):
                     '''Warteschleife'''
