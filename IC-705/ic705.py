@@ -11,7 +11,6 @@ Geplante Anpassungen:
 - [✓] Interaktionsmeldungen mit Messagebox
 - [✓] Verbesserung der Fehleranpassung (Try/except)
 - [✓] Umbau der bcd-Parsings
-- [] Unterdrückung der Frequenzaktuallisierung wärend des Sendens
 Zukünftige versionen:
 - [] Linux Implementierung
 - [] Optionale Speicherung der Fensterposition
@@ -447,6 +446,10 @@ class CIV_GUI:
         self.control.offset=int(self.etOffset_var.get())
         self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
 
+    def apply_offset_sign_change(self):
+        self.control.offset *= -1
+        self.etOffset_var.set(self.control.offset)
+
     def _cbPorts_auswahl(self, *args):
         '''einstellen eines Ports'''
         self.control.serial_port = None if self.cbPorts_var.get() == 'None' else self.cbPorts_var.get()
@@ -528,7 +531,8 @@ class CIV_GUI:
             bcd_err = None
             while freq_rx is None and bcd_err is None and freq_err is None:
                 bcd, bcd_err = self.control.bcd_abfrage(cmd=['vfo_a', 'vfo_b'])
-                print(f'bcd_read: {bcd.hex(' ')}')
+                if bcd is not None:
+                    print(f'bcd_read: {bcd.hex(' ')}')
                 if bcd_err is None:
                     freq_rx, freq_tx, freq_err = self.control.bcd_to_freq(bcd)
                     print(f'freq: {freq_rx} *** {freq_tx}')
@@ -549,13 +553,22 @@ class CIV_GUI:
             bcd = self.control.freq_to_bcd(freqtx)
             self.control.txfreq_write(bcd)
 
-    def calc_txfreq(self, rx, rx_alt):
-        diff = rx - rx_alt
-        if not self.control.freq_tracking or abs(diff) == 0:
-            return None    
-        tx = rx + self.control.offset # berechnung der TX-Frequenz
-        return tx
-
+    def calc_txfreq(self, rx, tx, rx_alt):
+        diff = abs(rx - rx_alt)
+        change_sign = False
+        offset = self.control.offset
+        if tx is not None:
+            if rx > tx and offset > 0:
+                change_sign = True
+            elif rx < tx and offset < 0:
+                change_sign = True
+        if not self.control.freq_tracking or diff == 0 or diff >= 100_000:
+            return None, change_sign  
+        tx = rx + (-offset if change_sign else offset) # berechnung der TX-Frequenz
+        if 30_000 <= tx < 200_000_000 or 400_000_000 <= tx <= 470_000_000:
+            return tx, change_sign
+        return None, change_sign
+    
     def frequenz_update_thread(self):
         '''Updateschleife für Anzeige und Tracking'''
         freqrx_alt = 0
@@ -565,7 +578,9 @@ class CIV_GUI:
                 self.fenster.after(0, self.stop_frequenz_update_thread) # Bei Fehler Stopp des UpdateThreads
                 break
             else:
-                freqtx = self.calc_txfreq(freq[0], freqrx_alt)
+                freqtx, change_sign = self.calc_txfreq(freq[0], freq[1], freqrx_alt)
+                if change_sign:
+                    self.fenster.after(0, self.apply_offset_sign_change)
                 if freqtx is not None:
                     self.txfreq_set(freqtx)
                 self.fenster.after(0, self.update_lbRXTX_Anzeige, freq[0], freq[1])
