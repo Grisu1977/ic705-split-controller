@@ -73,17 +73,17 @@ class CIV_Control:
         # öffnen und schreiben der *.ini
         with open(self.configfile, 'w') as cf:
             cf.write( # Kommentarblock in der Datei
-                '; #=================================================#\n' \
-                '; | Konfigurationsdatei für IC-705 Split Controller |\n' \
-                '; | Autor Pascal Pfau (DH1PV)                       |\n' \
-                '; | Diese Datei wird automatisch erzeugt.           |\n' \
-                '; | Manuelle Änderungen sind möglich,               |\n' \
-                '; | geschen auf eigene Gefahr. Sollte Programm      |\n' \
-                '; | nach änderungen nicht mehr wie erwartet laufen, |\n' \
-                '; | kann diese Datei gefahrlos gelöscht werden.     |\n' \
-                '; | Die Nutzung des Programms geschieht auf eigene  |\n' \
-                '; | Gefahr.                                         |\n' \
-                '; #=================================================#\n\n'
+                '; #==================================================#\n' \
+                '; | Konfigurationsdatei für IC-705 Split Controller  |\n' \
+                '; | Autor Pascal Pfau (DH1PV)                        |\n' \
+                '; | Diese Datei wird automatisch erzeugt.            |\n' \
+                '; | Manuelle Änderungen sind möglich,                |\n' \
+                '; | geschehen auf eigene Gefahr. Sollte das Programm |\n' \
+                '; | nach änderungen nicht mehr wie erwartet laufen,  |\n' \
+                '; | kann diese Datei gefahrlos gelöscht werden.      |\n' \
+                '; | Die Nutzung des Programms geschieht auf eigene   |\n' \
+                '; | Gefahr.                                          |\n' \
+                '; #==================================================#\n\n'
             )
             config.write(cf) # Konfiguration
 
@@ -217,11 +217,18 @@ class CIV_GUI:
         self.fenster = tk.Tk()
         self.fenster.title('IC-705 Split Controler') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False)
-        self.fenster.protocol('WM_DELETE_WINDOW', self.closeFenster)
+        self.fenster.protocol('WM_DELETE_WINDOW', self._closeFenster)
         self.control = CIV_Control()
         self.control.config_einlesen()
         self._setup_user_interface()
         self.start_ft = False
+
+    def _closeFenster(self):
+        '''Schließen / Beenden des Programms'''
+        if self.start_ft:
+            self.stop_frequenz_update_thread()
+        self.fenster.destroy()
+        self.control.config_schreiben()
 
     def _setup_user_interface(self):
 
@@ -388,11 +395,11 @@ class CIV_GUI:
                                  font=('Courier New', 12),
                                  width=12,
                                  validate='key',
-                                 validatecommand=(self.frOffset_uli.register(self._filter_etOffset), '%P'),
+                                 validatecommand=(self.frOffset_uli.register(self._etOffset_filter), '%P'),
                                  textvariable=self.etOffset_var)
         self.etOffset.grid(row=0, column=0, padx=5, pady=5)
-        self.etOffset.bind('<Return>',self._commit_etOffset)
-        self.etOffset.bind('<FocusOut>',self._commit_etOffset)
+        self.etOffset.bind('<Return>',self._etOffset_commit)
+        self.etOffset.bind('<FocusOut>',self._etOffset_commit)
 
         self.buOffset_plus = tk.Button(self.frOffset_uli,
                                        command=lambda:self._etOffset_pm(1),
@@ -418,11 +425,11 @@ class CIV_GUI:
         self.cbStep.grid(row=0, column=0)
         self.cbStep.bind('<<ComboboxSelected>>', self._cbStep_auswahl)
 
-    def _filter_etOffset(self, value):
+    def _etOffset_filter(self, value):
         '''Filtern der Benutzereingaben'''
         return value == '' or value == '-' or value.lstrip("-").isdigit()
 
-    def _commit_etOffset(self, event=None): # event wird von bind immer mitgeliefert aber hier nicht verwendet
+    def _etOffset_commit(self, event=None): # event wird von bind immer mitgeliefert aber hier nicht verwendet
         '''einstellen des Benutzeroffset'''
         raw_etOffset = self.etOffset_var.get()
         try:
@@ -446,7 +453,7 @@ class CIV_GUI:
         self.control.offset=int(self.etOffset_var.get())
         self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
 
-    def apply_offset_sign_change(self):
+    def _etOffset_sign_change(self):
         self.control.offset *= -1
         self.etOffset_var.set(self.control.offset)
 
@@ -454,14 +461,14 @@ class CIV_GUI:
         '''einstellen eines Ports'''
         self.control.serial_port = None if self.cbPorts_var.get() == 'None' else self.cbPorts_var.get()
 
+    def _cbStep_auswahl(self,*args):
+        '''Auswahl der Offset schrittweite'''
+        self.control.step = self.cbStep.get()
+
     def _refresh_ports(self):
         '''Aktuallisierung der Ports'''
         ports = self.control.abfrage_Ports()
         self.cbPorts.configure(values=ports)
-
-    def _cbStep_auswahl(self,*args):
-        '''Auswahl der Offset schrittweite'''
-        self.control.step = self.cbStep.get()
 
     def _tracking_on(self):
         '''Aktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
@@ -580,7 +587,7 @@ class CIV_GUI:
             else:
                 freqtx, change_sign = self.calc_txfreq(freq[0], freq[1], freqrx_alt)
                 if change_sign:
-                    self.fenster.after(0, self.apply_offset_sign_change)
+                    self.fenster.after(0, self._etOffset_sign_change)
                 if freqtx is not None:
                     self.txfreq_set(freqtx)
                 self.fenster.after(0, self.update_lbRXTX_Anzeige, freq[0], freq[1])
@@ -654,12 +661,6 @@ eingestellt ist.\
         y = ((screen_h // 2) - (height // 2)) * 0.66
         fensterHilfe.geometry(f'{width}x{height}+{x}+{round(y)}')
 
-    def closeFenster(self):
-        '''Schließen / Beenden des Programms'''
-        if self.start_ft:
-            self.stop_frequenz_update_thread()
-        self.fenster.destroy()
-        self.control.config_schreiben()
 
 
 gui=CIV_GUI()
