@@ -31,7 +31,9 @@ import threading
 import configparser
 from pathlib import Path
 
-version = '1.1.0'
+
+version = '1.0.0'
+
 
 class CIV_Control:    
     def __init__(self):
@@ -46,12 +48,14 @@ class CIV_Control:
         self.serial_port = None # Serielle schnittstelle (Default)
         self.baud_rate = 19200 # Default TRX-Baudrate
         self.time_out = 0.1 # Timeout beim Connect zum TRX via Pyserial
+        self.write_timeout = 5
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
         self.controller_Adresse = 0xe0 # Muss in der regel nicht angepasst werden
         self.offset = 287_500_000 # Default Offset für QO-100
         self.step = 10 # Default Schrittweite für manuelles nachjustieren
 
     def config_einlesen(self):
+        '''Einlesen der config.ini'''
         config = configparser.ConfigParser()
         if Path(self.configfile).is_file():
             config.read(self.configfile)
@@ -63,6 +67,7 @@ class CIV_Control:
             self.step = config['Offset']['Last_Step']
 
     def config_schreiben(self):
+        '''Parsen und Schreiben der config.ini'''
         config = configparser.ConfigParser()
         config['Transceiver'] = {
             'Last_COM_Port':str(self.serial_port),
@@ -70,8 +75,7 @@ class CIV_Control:
             'TRX_Adresse':f'{self.trx_Adresse:02x}' # Speichern als zweistellige HEX-Zahl
             }
         config['Offset'] = {'Last_Offset':self.offset,'Last_Step':self.step}
-        # öffnen und schreiben der *.ini
-        with open(self.configfile, 'w') as cf:
+        with open(self.configfile, 'w') as cf: # öffnen und schreiben der *.ini
             cf.write( # Kommentarblock in der Datei
                 '; #==================================================#\n' \
                 '; | Konfigurationsdatei für IC-705 Split Controller  |\n' \
@@ -85,15 +89,13 @@ class CIV_Control:
                 '; | Gefahr.                                          |\n' \
                 '; #==================================================#\n\n'
             )
-            config.write(cf) # Konfiguration
+            config.write(cf)
 
     def connect(self):
-        # Aufbau der verbindung zum TRX über Serielle Schnittstelle
+        '''Aufbau der verbindung zum TRX über Serielle Schnittstelle'''
         with self.lock:
-            if self.serial_port is None:
-                return False, 'Wähle einen Port'
             try:
-                self.ic705 = serial.Serial(port=self.serial_port, baudrate=self.baud_rate, timeout=self.time_out, write_timeout=2)
+                self.ic705 = serial.Serial(port=self.serial_port, baudrate=self.baud_rate, timeout=self.time_out, write_timeout=self.write_timeout)
                 '''überprüfung ob verbindung korreckt hergestellt worden ist und ob gerät auch korrekt antwortet'''
                 self.ic705.write(self._message('vfo_a'))
                 dataTest = self.ic705.read_until()
@@ -106,6 +108,11 @@ class CIV_Control:
                 return True, None
             except serial.SerialTimeoutException as e:
                 self.ic705 = None
+                return False, e
+            except serial.PortNotOpenError as e:
+                self.ic705 = None
+                if self.serial_port is None:
+                    e = f'Wähle einen Port\n{e}'
                 return False, e
             except Exception as e:
                 self.ic705 = None
@@ -123,7 +130,7 @@ class CIV_Control:
     def _message(self, cmd, bcd=None):
         '''Erstellen der CI-V Message'''
         msg=[0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd]
-        if cmd == 'set': # Setzen Frequenz im TRX (Nicht aktiver VFO)
+        if cmd == 'tx_set': # Setzen Frequenz im TRX (Nicht aktiver VFO)
             msg[4:4] = [0x25, 0x01] + bcd
         elif cmd == 'vfo_a': # Abfrage Frequenz (Aktiver VFO)
             msg[4:4] = [0x25,0x00]
@@ -156,7 +163,36 @@ class CIV_Control:
             except Exception as e:
                 return None, e
 
-    def bcd_to_freq(self, bcd:bytes):
+    def write(self, cmd, bcd):
+        '''schreiben von Komandos'''
+        with self.lock:
+            try:
+                msg = self._message(cmd, bcd)
+                self.ic705.reset_input_buffer()
+                self.ic705.write(msg)
+                ok_ng = self.ic705.read_until(b'\xfd')
+                print(f'###   ***   {ok_ng}   ***   ###')
+                if ok_ng[len(ok_ng)-2] == 0xfa:
+                    raise Exception('Fehler 0xFA beim schreiben')
+            except Exception as e:
+                print(f'Fehler beim Frequenz setzen: {e}')
+
+    def abfrage_Ports(self):
+        '''Abfrage "aller" aktiven Ports im System'''
+        ports = [p.device for p in serial.tools.list_ports.comports()]
+        if ports[0].startswith('COM'):
+            ports = sorted(ports, key=lambda x: int(x.replace('COM', '')))
+        return ports
+
+
+class CIV_Worker:
+    def __init__(self, bcd_abfrage, write, trx_adr, contr_adr):
+        self.write = write
+        self.bcd_abfrage = bcd_abfrage
+        self.trx_Adresse = trx_adr
+        self.controller_Adresse = contr_adr
+
+    def bcd_to_freq(self, bcd:bytes, freq_tracking):
             '''Lesen und extrahieren der 5 Frequenz-Bytes'''
             find_rx = bytes([0xfe,0xfe,self.controller_Adresse,self.trx_Adresse,0x25,0x00])
             find_tx = bytes([0xfe,0xfe,self.controller_Adresse,self.trx_Adresse,0x25,0x01])
@@ -170,7 +206,7 @@ class CIV_Control:
                 if f_rx != -1 and bcd[f_rx + 11] == 0xfd:
                     freq_rx = bcd[f_rx+10:f_rx+5:-1]
                     freq_rx = freq_rx.hex()
-                if self.freq_tracking and f_tx != -1 and bcd[f_tx + 11] ==0xfd:
+                if freq_tracking and f_tx != -1 and bcd[f_tx + 11] ==0xfd:
                     freq_tx = bcd[f_tx+10:f_tx+5:-1]
                     freq_tx = freq_tx.hex()
                 if freq_rx and freq_tx:
@@ -181,7 +217,7 @@ class CIV_Control:
                     return None, None, None
             except Exception as e:
                 return None, None, e
-            
+
     def freq_to_bcd(self, freq):
         '''Konvertiert Frequenz in BCD-Format (5 Bytes für 10 Ziffern)'''
         freq = f'{freq:010d}' # Auffüllen mit nullen
@@ -189,24 +225,55 @@ class CIV_Control:
         freq_bytes.reverse() # BCD-Bytes, niederwertige Dezimalziffern zuerst
         return freq_bytes
 
-    def txfreq_write(self, bcd):
-        '''Setzen der frequenz des nicht aktiven VFO'''
-        with self.lock:
-            try:
-                msg_tx = self._message('set', bcd)
-                self.ic705.write(msg_tx)
-            except Exception as e:
-                print(f'Fehler beim Frequenz setzen: {e}')
+    def txfreq_set(self, freqtx, start_ft, connected):
+        '''Setzen der Sendefrequenz (Nicht Aktiver VFO) im Funkgerät'''
+        if start_ft and connected:
+            bcd = self.freq_to_bcd(freqtx)
+            self.write('tx_set', bcd)
+
+    def calc_txfreq(self, rx, tx, rx_alt, offset, freq_tracking):
+        '''Berechnung der TX-Frequenz'''
+        diff = None if rx_alt is None else abs(rx - rx_alt)
+        change_sign = False
+        if tx is not None:
+            if rx > tx and offset > 0:
+                change_sign = True
+            elif rx < tx and offset < 0:
+                change_sign = True
+        if diff is not None and (not freq_tracking or diff == 0 or diff >= 100_000):
+            return None, change_sign
+        tx = rx + (-offset if (change_sign and tx) else offset)
+        if 30_000 <= tx < 200_000_000 or 400_000_000 <= tx <= 470_000_000:
+            return tx, change_sign
+        return None, change_sign
+
+    def freq_update(self, start_ft, connected, freq_tracking):
+        '''Abfrage der Frequenzen von "vfo a" und "vfo b"'''
+        if start_ft and connected:
+            freq_rx = None
+            freq_err = None
+            bcd_err = None
+            while freq_rx is None and bcd_err is None and freq_err is None:
+                bcd, bcd_err = self.bcd_abfrage(cmd=['vfo_a', 'vfo_b'])
+                if bcd is not None:
+                    print(f'bcd_read: {bcd.hex(' ')}')
+                if bcd_err is None:
+                    freq_rx, freq_tx, freq_err = self.bcd_to_freq(bcd, freq_tracking)
+                    print(f'freq: {freq_rx} *** {freq_tx}')
+                    if freq_err is None and freq_rx:
+                        return [freq_rx, freq_tx], None
+
+            msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
+            if bcd_err:
+                msg += f'\nBCD Fehler (read): {bcd_err}'
+            if freq_err:
+                msg += f'\nFrequenz Fehler: {freq_err}'
+            return None, msg
+        return None, None
 
     def is_tx_enable(self):
         pass
-      
-    def abfrage_Ports(self):
-        '''Abfrage "aller" aktiven Ports im System'''
-        ports = [p.device for p in serial.tools.list_ports.comports()]
-        if ports[0].startswith('COM'):
-            ports = sorted(ports, key=lambda x: int(x.replace('COM', '')))
-        return ports
+
 
 class CIV_GUI:
     def __init__(self):
@@ -216,12 +283,16 @@ class CIV_GUI:
         '''
         self.fenster = tk.Tk()
         self.fenster.title('IC-705 Split Controler') # Name Titelleiste Fenster / Programmname
-        self.fenster.resizable(False, False)
+        self.fenster.resizable(False, False) # Größe des fensters wird durch seine inhalte bestimmt
         self.fenster.protocol('WM_DELETE_WINDOW', self._closeFenster)
         self.control = CIV_Control()
         self.control.config_einlesen()
         self._setup_user_interface()
         self.start_ft = False
+        self.worker = CIV_Worker(bcd_abfrage=self.control.bcd_abfrage,
+                                 write=self.control.write,
+                                 trx_adr=self.control.trx_Adresse,
+                                 contr_adr=self.control.controller_Adresse)
 
     def _closeFenster(self):
         '''Schließen / Beenden des Programms'''
@@ -235,14 +306,14 @@ class CIV_GUI:
         style = ttk.Style()
         style.theme_use('clam')
 
-        # Definition der Farben im Fenster
-        self.bg_ausgabe = "#000000"
-        self.fg_ausgabeRX = "#00ff00"
-        self.fg_ausgabeTX = "#ff0000"
-        self.bg_dunkel = "#1e293b"
-        self.bg_mittel = "#334155"
-        self.rahmen_hell = "#dbdbbd"
-        self.schrift = "#ffffff"
+        '''Definition der Farben im Fenster'''
+        self.bg_ausgabe = "#000000" # Hintergrund Frequenzanzeige RX / TX
+        self.fg_ausgabeRX = "#00ff00" # Schriftfarbe RX
+        self.fg_ausgabeTX = "#ff0000" # Scriftfarbe TX
+        self.bg_dunkel = "#1e293b" # Hintergrund des Fensters
+        self.bg_mittel = "#334155" # Hintergrund der Frameinhalte
+        self.rahmen_hell = "#dbdbbd" # Farbe der Frameramen
+        self.schrift = "#ffffff" # Farbe der Schrift
 
         self.fenster.configure(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
 
@@ -443,13 +514,13 @@ class CIV_GUI:
             self.etOffset.focus_set()
             self.etOffset.select_range(0, tk.END)
             messagebox.showerror(title='Fehler', message='Bitte eine gültige Frequenz in Herz eingeben\nNur Ziffern 0 ... 9')
-            return "break"
 
     def _etOffset_pm(self, plusminus):
         '''Feinjustierung des Offsets'''
         var = int(self.etOffset_var.get())
         step = int(self.control.step)
-        self.etOffset_var.set(var + step * plusminus) # einstellen der richtung Plus / Minus
+        self.etOffset_var.set(var + step * plusminus) 
+        # einstellen der richtung Plus / Minus
         self.control.offset=int(self.etOffset_var.get())
         self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
 
@@ -461,7 +532,7 @@ class CIV_GUI:
         '''einstellen eines Ports'''
         self.control.serial_port = None if self.cbPorts_var.get() == 'None' else self.cbPorts_var.get()
 
-    def _cbStep_auswahl(self,*args):
+    def _cbStep_auswahl(self, *args):
         '''Auswahl der Offset schrittweite'''
         self.control.step = self.cbStep.get()
 
@@ -474,6 +545,7 @@ class CIV_GUI:
         '''Aktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
         self.control.freq_tracking = True
         self.buTracking.config(background="#ffdd00", text='Tracking Stop', command=self._tracking_off)
+        time.sleep(0.1)
         self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
 
     def _tracking_off(self):
@@ -481,6 +553,29 @@ class CIV_GUI:
         self.control.freq_tracking = False
         self.buTracking.config(background="#0000ff", text='Tracking Start', command=self._tracking_on)
         self.lbTX_Anzeige_text.set(value='off') # TX-Anzeige auf 'off' schalten
+
+    def _update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh=False):
+        '''Anzeige der Frequenzen'''
+        if self.start_ft and self.control.connected:
+            mhzrx = freqrx / 1_000_000
+            self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
+            if self.control.freq_tracking and freqtx is not None:
+                mhztx = freqtx / 1_000_000
+                self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
+                if refresh:
+                    self.worker.txfreq_set(freqtx, self.start_ft, self.control.connected)
+
+    def refresh_lbRXTX_Anzeige(self):
+        '''Aktuallisiert die TX-Anzeige'''
+        if self.start_ft and self.control.freq_tracking:
+            freq, err = self.worker.freq_update(self.start_ft, self.control.connected, self.control.freq_tracking)
+            if freq is None and err is not None:
+                messagebox.showerror(title='Fehler', message=err)
+                return
+            freqtx, change_sign = self.worker.calc_txfreq(rx=freq[0], tx=0, rx_alt=None,
+                                                          offset=self.control.offset,
+                                                          freq_tracking=self.control.freq_tracking,)
+            self._update_lbRXTX_Anzeige(freqrx=freq[0], freqtx=freqtx, refresh=True)
 
     def start_frequenz_update_thread(self):
         '''Starten der kontinuirlichen Frequenzabfrage'''
@@ -513,84 +608,23 @@ class CIV_GUI:
         self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
         self.lbRX_Anzeige_text.set(value='off') # Anzeige auf "off" stellen
 
-    def refresh_lbRXTX_Anzeige(self):
-        '''Aktuallisiert die TX-Anzeige'''
-        if self.start_ft and self.control.freq_tracking:
-            freq = self.freq_update()
-            self.update_lbRXTX_Anzeige(freqrx=freq[0], freqtx=freq[1], refresh=True)
-
-    def update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh = False):
-        '''Anzeige der Frequenzen'''
-        if self.start_ft and self.control.connected:
-            mhzrx = freqrx / 1_000_000
-            self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
-            if self.control.freq_tracking and freqtx is not None:
-                mhztx = freqtx / 1_000_000
-                self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
-                if refresh:
-                    self.txfreq_set(freqrx+self.control.offset)
-
-    def freq_update(self):
-        '''Abfrage der RX-Frequenz für die Anzeige und Berechnung der TX-Frequenz'''
-        if self.start_ft and self.control.connected:
-            freq_rx = None
-            freq_err = None
-            bcd_err = None
-            while freq_rx is None and bcd_err is None and freq_err is None:
-                bcd, bcd_err = self.control.bcd_abfrage(cmd=['vfo_a', 'vfo_b'])
-                if bcd is not None:
-                    print(f'bcd_read: {bcd.hex(' ')}')
-                if bcd_err is None:
-                    freq_rx, freq_tx, freq_err = self.control.bcd_to_freq(bcd)
-                    print(f'freq: {freq_rx} *** {freq_tx}')
-                    if freq_err is None and freq_rx:
-                        return [freq_rx, freq_tx]
-
-            msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
-            if bcd_err:
-                msg += f'\nBCD Fehler (read): {bcd_err}'
-            if freq_err:
-                msg += f'\nFrequenz Fehler: {freq_err}'
-            self.fenster.after(0, lambda: messagebox.showerror(title='Fehler', message=msg))
-            return None
-
-    def txfreq_set(self, freqtx):
-        '''Setzen der Sendefrequenz (Nicht Aktiver VFO) im Funkgerät'''
-        if self.start_ft and self.control.connected:
-            bcd = self.control.freq_to_bcd(freqtx)
-            self.control.txfreq_write(bcd)
-
-    def calc_txfreq(self, rx, tx, rx_alt):
-        diff = abs(rx - rx_alt)
-        change_sign = False
-        offset = self.control.offset
-        if tx is not None:
-            if rx > tx and offset > 0:
-                change_sign = True
-            elif rx < tx and offset < 0:
-                change_sign = True
-        if not self.control.freq_tracking or diff == 0 or diff >= 100_000:
-            return None, change_sign  
-        tx = rx + (-offset if change_sign else offset) # berechnung der TX-Frequenz
-        if 30_000 <= tx < 200_000_000 or 400_000_000 <= tx <= 470_000_000:
-            return tx, change_sign
-        return None, change_sign
-    
     def frequenz_update_thread(self):
         '''Updateschleife für Anzeige und Tracking'''
         freqrx_alt = 0
         while self.start_ft and self.control.connected:
-            freq = self.freq_update()
-            if freq is None:
+            freq, err = self.worker.freq_update(self.start_ft, self.control.connected, self.control.freq_tracking)
+            if freq is None and err is not None:
                 self.fenster.after(0, self.stop_frequenz_update_thread) # Bei Fehler Stopp des UpdateThreads
+                self.fenster.after(0, lambda: messagebox.showerror(title='Fehler', message=err))
                 break
             else:
-                freqtx, change_sign = self.calc_txfreq(freq[0], freq[1], freqrx_alt)
+                freqtx, change_sign = self.worker.calc_txfreq(freq[0], freq[1], freqrx_alt,
+                                                              self.control.offset, self.control.freq_tracking)
                 if change_sign:
                     self.fenster.after(0, self._etOffset_sign_change)
                 if freqtx is not None:
-                    self.txfreq_set(freqtx)
-                self.fenster.after(0, self.update_lbRXTX_Anzeige, freq[0], freq[1])
+                    self.worker.txfreq_set(freqtx, self.start_ft, self.control.connected)
+                self.fenster.after(0, self._update_lbRXTX_Anzeige, freq[0], freq[1])
                 freqrx_alt = freq[0]
                 for i in range(10):
                     '''Warteschleife'''
@@ -611,8 +645,11 @@ Funktionen:
 - Feinabstimmung der TX-Frequenz
 - Speicherung der Einstellungen\n
 Release Notes:
-02-01-2026
-- Erste Version
+02-01-2026 v1.0.0
+- Erste stabile Version (1.0.0)
+- Verbesserte Code-Struktur und Stabilität
+- Einführung einer Worker-Klasse
+- Bugfixes
 
 Disclaimer:
 Die benutzung des Programms geschied auf eigene Gefahr. Für Schäden an Geräten (Computer, TRX, etc.) \
