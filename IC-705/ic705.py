@@ -19,6 +19,7 @@ Zukünftige versionen:
 - [] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
 - [] Einschalten des Splitbetriebs bei Tracking Start (Optional Split Ja / Nein)
 - [] Verbindung via WLAN
+- [] Verbesserung des filters ob gültiger offset (Liegt Frequenz im Gültigen Bereich vom TRX)
 '''
 
 import time
@@ -125,7 +126,7 @@ class CIV_Control:
                 self.ic705.close()
                 self.connected = False
             except Exception as e:
-                print(f'Fehler beim Trennen: {e}')
+                print(f'Fehler beim Trennen: {e}') # Kontrollausgabe
 
     def _message(self, cmd, bcd=None):
         '''Erstellen der CI-V Message'''
@@ -171,11 +172,11 @@ class CIV_Control:
                 self.ic705.reset_input_buffer()
                 self.ic705.write(msg)
                 ok_ng = self.ic705.read_until(b'\xfd')
-                print(f'###   ***   {ok_ng}   ***   ###')
+                print(f'###   ***   {ok_ng}   ***   ###') # Kontrollausgabe
                 if ok_ng[len(ok_ng)-2] == 0xfa:
                     raise Exception('Fehler 0xFA beim schreiben')
             except Exception as e:
-                print(f'Fehler beim Frequenz setzen: {e}')
+                print(f'Fehler beim Frequenz setzen: {e}') # Kontrollausgabe
 
     def abfrage_Ports(self):
         '''Abfrage "aller" aktiven Ports im System'''
@@ -256,10 +257,10 @@ class CIV_Worker:
             while freq_rx is None and bcd_err is None and freq_err is None:
                 bcd, bcd_err = self.bcd_abfrage(cmd=['vfo_a', 'vfo_b'])
                 if bcd is not None:
-                    print(f'bcd_read: {bcd.hex(' ')}')
+                    print(f'bcd_read: {bcd.hex(' ')}') # Kontrollausgabe
                 if bcd_err is None:
                     freq_rx, freq_tx, freq_err = self.bcd_to_freq(bcd, freq_tracking)
-                    print(f'freq: {freq_rx} *** {freq_tx}')
+                    print(f'freq: {freq_rx} *** {freq_tx}') # Kontrollausgabe
                     if freq_err is None and freq_rx:
                         return [freq_rx, freq_tx], None
 
@@ -470,7 +471,7 @@ class CIV_GUI:
                                  textvariable=self.etOffset_var)
         self.etOffset.grid(row=0, column=0, padx=5, pady=5)
         self.etOffset.bind('<Return>',self._etOffset_commit)
-        self.etOffset.bind('<FocusOut>',self._etOffset_commit)
+        # self.etOffset.bind('<FocusOut>',self._etOffset_commit)
 
         self.buOffset_plus = tk.Button(self.frOffset_uli,
                                        command=lambda:self._etOffset_pm(1),
