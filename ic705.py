@@ -700,6 +700,6 @@ eingestellt ist.\
         fensterHilfe.geometry(f'{width}x{height}+{x}+{round(y)}')
 
 
-
-gui=CIV_GUI()
-gui.fenster.mainloop()
+if __name__ == "__main__":
+    gui=CIV_GUI()
+    gui.fenster.mainloop()
