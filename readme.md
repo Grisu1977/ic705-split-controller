@@ -23,7 +23,7 @@ Der Fokus liegt auf einfachem, stabilem Betrieb und klarer Bedienung.
 - Grafische Oberfläche mit Tkinter
 - Speicherung der letzten Einstellungen in einer `config.ini`
 - Statusanzeige für Verbindungszustand
-- Automatische umschaltung des VFO-Modes von primär nach sekundär bei aktivem Tracking.
+- Automatische Umschaltung des VFO-Modes von primär nach sekundär bei aktivem Tracking.
 
 ---
 
