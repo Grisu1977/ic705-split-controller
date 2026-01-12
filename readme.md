@@ -7,6 +7,10 @@ Das Programm liest kontinuierlich die RX-Frequenz des aktiven VFO aus und setzt 
 eingestellten Offset – automatisch die TX-Frequenz auf dem nicht aktiven VFO.  
 Der Fokus liegt auf einfachem, stabilem Betrieb und klarer Bedienung.
 
+> Hinweis: Die README beschreibt den aktuellen Entwicklungsstand (`main`).
+> Die letzte veröffentlichte Version ist v1.0.0.
+
+
 ---
 
 ## Funktionen
@@ -19,6 +23,7 @@ Der Fokus liegt auf einfachem, stabilem Betrieb und klarer Bedienung.
 - Grafische Oberfläche mit Tkinter
 - Speicherung der letzten Einstellungen in einer `config.ini`
 - Statusanzeige für Verbindungszustand
+- Automatische umschaltung des VFO-Modes von primär nach sekundär bei aktivem Tracking.
 
 ---
 
@@ -81,7 +86,6 @@ Linux-Implementierung
 Speicherung der Fensterposition
 Tray-Icon
 Manuelles Setzen von RX/TX-Frequenzen
-Automatische Mode-Angleichung zwischen VFO A / B
 Optionale automatische Aktivierung von Split
 CI-V über WLAN
 Erweiterte Offset-Validierung

@@ -16,7 +16,7 @@ Zukünftige versionen:
 - [] Optionale Speicherung der Fensterposition
 - [] Hinzufügen eines Tray-Icons
 - [] Manuelles setzen der TX/RX Frequenz mit berechnung und setzen der Offsetfrequenz
-- [] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
+- [✓] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
 - [] Einschalten des Splitbetriebs bei Tracking Start (Optional Split Ja / Nein)
 - [] Verbindung via WLAN
 - [] Verbesserung des filters ob gültiger offset (Liegt Frequenz im Gültigen Bereich vom TRX)
@@ -51,7 +51,7 @@ class CIV_Control:
         self.write_timeout = 5
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
         self.controller_Adresse = 0xe0 # Muss in der regel nicht angepasst werden
-        self.offset = 287_500_000 # Default Offset für QO-100
+        self.offset = 287_500_000 # Default Offset (QO-100)
         self.step = 10 # Default Schrittweite für manuelles nachjustieren
 
     def config_einlesen(self):
@@ -97,7 +97,7 @@ class CIV_Control:
             try:
                 self.ic705 = serial.Serial(port=self.serial_port, baudrate=self.baud_rate, timeout=self.time_out, write_timeout=self.write_timeout)
                 '''überprüfung ob verbindung korreckt hergestellt worden ist und ob gerät auch korrekt antwortet'''
-                self.ic705.write(self._message('vfo_a'))
+                self.ic705.write(self._message('vfo_rx'))
                 dataTest = self.ic705.read_until()
                 if len(dataTest) < 7:
                     self.ic705.close()
@@ -132,23 +132,30 @@ class CIV_Control:
         msg=[0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd]
         if cmd == 'tx_set': # Setzen Frequenz im TRX (Nicht aktiver VFO)
             msg[4:4] = [0x25, 0x01] + bcd
-        elif cmd == 'vfo_a': # Abfrage Frequenz (Aktiver VFO)
-            msg[4:4] = [0x25,0x00]
-        elif cmd == 'vfo_b': # Abfrage Frequenz (Nicht aktiver VFO)
-            msg[4:4] = [0x25,0x01]
+        elif cmd == 'vfo_rx': # Abfrage Frequenz (Aktiver VFO)
+            msg[4:4] = [0x25, 0x00]
+        elif cmd == 'vfo_tx': # Abfrage Frequenz (Nicht aktiver VFO)
+            msg[4:4] = [0x25, 0x01]
         elif cmd == 'tx': # is TX / RX 
             msg[4:4] = [0x1c, 0x00]
         elif cmd == 'xfc': # is XTC
             msg[4:4] = [0x1c, 0x02]
-        elif cmd == 'mode': # Mode + Filter (usb, lsb, cw, ...)
-            msg[4:4] = [0x04]
+        elif cmd == 'mode_rx': # Mode + Filter (usb, lsb, cw, ...)
+            msg[4:4] = [0x26, 0x00]
+        elif cmd == 'mode_tx': # Mode + Filter (usb, lsb, cw, ...)
+            bcd_mode = [0x26, 0x01]
+            if bcd is None:
+                msg[4:4] = bcd_mode
+            else:
+                bcd_mode.extend(bcd)
+                msg[4:4] = bcd_mode
         elif cmd == 'data': # Data on / off + Filter
             msg[4:4] = [0x1a, 0x06]
         elif cmd == 'split': # is Split on / off
             msg[4:4] = [0x0f]
         return bytes(msg)
 
-    def bcd_abfrage(self, cmd:tuple):
+    def bcd_abfrage(self, cmd:list):
         '''Abfrage Binär Codierte Dezimalzahl'''
         with self.lock:
             try:
@@ -209,7 +216,7 @@ class CIV_Worker:
                 if f_rx != -1 and bcd[f_rx + 11] == 0xfd:
                     freq_rx = bcd[f_rx+10:f_rx+5:-1]
                     freq_rx = freq_rx.hex()
-                if self.freq_tracking and f_tx != -1 and bcd[f_tx + 11] ==0xfd:
+                if self.freq_tracking and f_tx != -1 and bcd[f_tx + 11] == 0xfd:
                     freq_tx = bcd[f_tx+10:f_tx+5:-1]
                     freq_tx = freq_tx.hex()
                 if freq_rx and freq_tx:
@@ -224,9 +231,27 @@ class CIV_Worker:
     def freq_to_bcd(self, freq):
         '''Konvertiert Frequenz in BCD-Format (5 Bytes für 10 Ziffern)'''
         freq = f'{freq:010d}' # Auffüllen mit nullen
-        freq_bytes = [int(freq[i]+freq[i+1],16) for i in range(0, len(freq)-1, 2)] # Bildung BCD-Bytes: 2 Dezimalziffern = 1 Byte
+        freq_bytes = [int(freq[i]+freq[i+1], 16) for i in range(0, len(freq)-1, 2)] # Bildung BCD-Bytes: 2 Dezimalziffern = 1 Byte
         freq_bytes.reverse() # BCD-Bytes, niederwertige Dezimalziffern zuerst
         return freq_bytes
+
+    def bcd_to_mode(self, bcd:bytes):
+        find_mode_rx = bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0x26, 0x00])
+        find_mode_tx = bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0x26, 0x01])
+        mode_vfo_rx = None
+        mode_vfo_tx = None
+        try:
+            f_m_rx = bcd.find(find_mode_rx)
+            f_m_tx = bcd.find(find_mode_tx)
+            if bcd.find(bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0xfa, 0xfd])) != -1:
+                raise serial.SerialException('No response from TRX (power off or CI-V inactive)')
+            if f_m_rx != -1 and bcd[f_m_rx+9] == 0xfd:
+                mode_vfo_rx = bcd[f_m_rx+6:f_m_rx+9]
+            if f_m_tx != -1 and bcd[f_m_tx+9] == 0xfd:
+                mode_vfo_tx = bcd[f_m_tx+6:f_m_tx+9]
+            return (mode_vfo_rx, mode_vfo_tx), None
+        except Exception as e:
+            return None, e
 
     def txfreq_set(self, freqtx, start_ft, connected):
         '''Setzen der Sendefrequenz (Nicht Aktiver VFO) im Funkgerät'''
@@ -254,26 +279,43 @@ class CIV_Worker:
         '''Abfrage der Frequenzen von "vfo a" und "vfo b"'''
         if start_ft and connected:
             freq_rx = None
-            freq_err = None
-            bcd_err = None
-            while freq_rx is None and bcd_err is None and freq_err is None:
-                bcd, bcd_err = self.bcd_abfrage(cmd=('vfo_a', 'vfo_b'))
+            err_freq = None
+            err_bcd = None
+            while freq_rx is None and err_bcd is None and err_freq is None:
+                bcd, err_bcd = self.bcd_abfrage(cmd=['vfo_rx', 'vfo_tx'])
                 if bcd is not None:
                     print(f'bcd_read: {bcd.hex(' ')}') # Kontrollausgabe
-                if bcd_err is None:
-                    freq_rx, freq_tx, freq_err = self.bcd_to_freq(bcd)
+                if err_bcd is None:
+                    freq_rx, freq_tx, err_freq = self.bcd_to_freq(bcd)
                     print(f'freq: {freq_rx} *** {freq_tx}') # Kontrollausgabe
-                    if freq_err is None and freq_rx:
+                    if err_freq is None and freq_rx:
                         return (freq_rx, freq_tx), None
-
             msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
-            if bcd_err:
-                msg += f'\nBCD Fehler (read): {bcd_err}'
-            if freq_err:
-                msg += f'\nFrequenz Fehler: {freq_err}'
+            if err_bcd:
+                msg += f'\nBCD Fehler (read): {err_bcd}'
+            if err_freq:
+                msg += f'\nFrequenz Fehler: {err_freq}'
             return None, msg
         return None, None
 
+    def mode_switch(self):
+        if self.freq_tracking:
+            bcd, err_bcd = self.bcd_abfrage(['mode_rx', 'mode_tx'])
+            mode, err_mode = self.bcd_to_mode(bcd)
+            if (mode[0] != mode[1]):
+                self.write('mode_tx', mode[0])
+                # return True, None
+            if err_mode or err_bcd:
+                # msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
+                if err_bcd:
+                    msg += f'\nMode lese Fehler (bcd): {err_bcd}'
+                if err_mode:
+                    msg += f'\nMode Parsing-Fehler: {err_mode}'
+                print(msg)
+                input()
+                # return False, msg
+        # return None, None
+    
     def is_tx_enable(self):
         pass
 
@@ -616,12 +658,17 @@ class CIV_GUI:
     def frequenz_update_thread(self):
         '''Updateschleife für Anzeige und Tracking'''
         freqrx_alt = 0
+        s_old = int(time.time())
         while self.start_ft and self.control.connected:
+            s_new = int(time.time())
+            delta_s = s_new - s_old
+            if  delta_s >= 1:
+                self.worker.mode_switch()
+                s_old = int(time.time())
             freq, err = self.worker.freq_update(self.start_ft, self.control.connected)
-            self.worker.mode_switch()
             if freq is None and err is not None:
                 self.fenster.after(0, self.stop_frequenz_update_thread) # Bei Fehler Stopp des UpdateThreads
-                self.fenster.after(0, lambda: messagebox.showerror(title='Fehler', message=err))
+                self.fenster.after(0, lambda:messagebox.showerror(title='Fehler', message=err))
                 break
             else:
                 freqtx, change_sign = self.worker.calc_txfreq(freq[0], freq[1], freqrx_alt)
