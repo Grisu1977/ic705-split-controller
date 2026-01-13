@@ -6,20 +6,15 @@ Benötigte Bibliotheken:
 - pip install pyserial
 Einstellungen im TRX:
 - CI-V USB Echo Back muss 'off' sein
-Geplante Anpassungen:
-- [✓] Hilfefenster / Infofenster
-- [✓] Interaktionsmeldungen mit Messagebox
-- [✓] Verbesserung der Fehleranpassung (Try/except)
-- [✓] Umbau der bcd-Parsings
-Zukünftige versionen:
-- [] Linux Implementierung
-- [] Optionale Speicherung der Fensterposition
-- [] Hinzufügen eines Tray-Icons
-- [] Manuelles setzen der TX/RX Frequenz mit berechnung und setzen der Offsetfrequenz
+Zukünftige Versionen / Ideen:
 - [✓] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
 - [] Einschalten des Splitbetriebs bei Tracking Start (Optional Split Ja / Nein)
+- [] Hinzufügen eines Tray-Icons
+- [] Optionale Speicherung der Fensterposition
+- [] Linux Implementierung
+- [] Manuelles setzen der TX/RX Frequenz mit Berechnung und setzen der Offsetfrequenz
 - [] Verbindung via WLAN
-- [] Verbesserung des filters ob gültiger offset (Liegt Frequenz im Gültigen Bereich vom TRX)
+- [] Verbesserung des Filters ob gültiger Offset (Liegt Frequenz im Gültigen Bereich vom TRX)
 '''
 
 import time
@@ -50,7 +45,7 @@ class CIV_Control:
         self.time_out = 0.1 # Timeout beim Connect zum TRX via Pyserial
         self.write_timeout = 5
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
-        self.controller_Adresse = 0xe0 # Muss in der regel nicht angepasst werden
+        self.controller_Adresse = 0xe0 # Muss in der Regel nicht angepasst werden
         self.offset = 287_500_000 # Default Offset (QO-100)
         self.step = 10 # Default Schrittweite für manuelles nachjustieren
 
@@ -83,7 +78,7 @@ class CIV_Control:
                 '; | Diese Datei wird automatisch erzeugt.            |\n' \
                 '; | Manuelle Änderungen sind möglich,                |\n' \
                 '; | geschehen auf eigene Gefahr. Sollte das Programm |\n' \
-                '; | nach änderungen nicht mehr wie erwartet laufen,  |\n' \
+                '; | nach Änderungen nicht mehr wie erwartet laufen,  |\n' \
                 '; | kann diese Datei gefahrlos gelöscht werden.      |\n' \
                 '; | Die Nutzung des Programms geschieht auf eigene   |\n' \
                 '; | Gefahr.                                          |\n' \
@@ -92,17 +87,17 @@ class CIV_Control:
             config.write(cf)
 
     def connect(self):
-        '''Aufbau der verbindung zum TRX über Serielle Schnittstelle'''
+        '''Aufbau der Verbindung zum TRX über Serielle Schnittstelle'''
         with self.lock:
             try:
                 self.ic705 = serial.Serial(port=self.serial_port, baudrate=self.baud_rate, timeout=self.time_out, write_timeout=self.write_timeout)
-                '''überprüfung ob verbindung korreckt hergestellt worden ist und ob gerät auch korrekt antwortet'''
+                '''überprüfung ob Verbindung korrekt hergestellt worden ist und ob Gerät auch korrekt Antwortet'''
                 self.ic705.write(self._message('vfo_rx'))
                 dataTest = self.ic705.read_until()
                 if len(dataTest) < 7:
                     self.ic705.close()
-                    raise IOError('Keine korrekte Antwort vom Tranceiver.\
-                                  \rIst der Tranceiver eingeschaltet?\
+                    raise IOError('Keine korrekte Antwort vom Transceiver.\
+                                  \rIst der Transceiver eingeschaltet?\
                                   \rIst der Richtige Port gewählt?')
                 self.connected = True
                 return True, None
@@ -159,7 +154,7 @@ class CIV_Control:
         '''Abfrage Binär Codierte Dezimalzahl'''
         with self.lock:
             try:
-                self.ic705.reset_input_buffer() # Löschen des empfangsbuffers
+                self.ic705.reset_input_buffer() # Löschen des Empfangspuffers
                 for c in cmd:
                     msg = self._message(c)
                     self.ic705.write(msg) # Abfrage
@@ -171,7 +166,7 @@ class CIV_Control:
                 return None, e
 
     def write(self, cmd, bcd):
-        '''schreiben von Komandos'''
+        '''schreiben von Kommandos'''
         with self.lock:
             try:
                 msg = self._message(cmd, bcd)
@@ -188,7 +183,7 @@ class CIV_Control:
         '''Abfrage "aller" aktiven Ports im System'''
         ports = [p.device for p in serial.tools.list_ports.comports()]
         if ports[0].startswith('COM'):
-            ports = sorted(ports, key=lambda x: int(x.replace('COM', '')))
+            ports = sorted(ports, key=lambda x: int(x.replace('COM', ''))) # Sortieren der Com-Ports
         return ports
 
 
@@ -211,12 +206,12 @@ class CIV_Worker:
             try:
                 f_rx = bcd.find(find_rx)
                 f_tx = bcd.find(find_tx)
-                if bcd.find(bytes([0xfe,0xfe,self.controller_Adresse,self.trx_Adresse,0xfa,0xfd])) != -1:
+                if bcd.find(bytes([0xfe,0xfe,self.controller_Adresse,self.trx_Adresse,0xfa,0xfd])) != -1: # Fehlerhafte Antwort abfangen
                     raise serial.SerialException('No response from TRX (power off or CI-V inactive)')
-                if f_rx != -1 and bcd[f_rx + 11] == 0xfd:
+                if f_rx != -1 and bcd[f_rx + 11] == 0xfd: # Parsing rx Bytes
                     freq_rx = bcd[f_rx+10:f_rx+5:-1]
                     freq_rx = freq_rx.hex()
-                if self.freq_tracking and f_tx != -1 and bcd[f_tx + 11] == 0xfd:
+                if self.freq_tracking and f_tx != -1 and bcd[f_tx + 11] == 0xfd: # Parsing tx Bytes
                     freq_tx = bcd[f_tx+10:f_tx+5:-1]
                     freq_tx = freq_tx.hex()
                 if freq_rx and freq_tx:
@@ -230,12 +225,13 @@ class CIV_Worker:
 
     def freq_to_bcd(self, freq):
         '''Konvertiert Frequenz in BCD-Format (5 Bytes für 10 Ziffern)'''
-        freq = f'{freq:010d}' # Auffüllen mit nullen
+        freq = f'{freq:010d}' # Auffüllen mit Nullen
         freq_bytes = [int(freq[i]+freq[i+1], 16) for i in range(0, len(freq)-1, 2)] # Bildung BCD-Bytes: 2 Dezimalziffern = 1 Byte
         freq_bytes.reverse() # BCD-Bytes, niederwertige Dezimalziffern zuerst
         return freq_bytes
 
     def bcd_to_mode(self, bcd:bytes):
+        '''Parsing der ber Mode-Bytes'''
         find_mode_rx = bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0x26, 0x00])
         find_mode_tx = bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0x26, 0x01])
         mode_vfo_rx = None
@@ -243,13 +239,13 @@ class CIV_Worker:
         try:
             f_m_rx = bcd.find(find_mode_rx)
             f_m_tx = bcd.find(find_mode_tx)
-            if bcd.find(bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0xfa, 0xfd])) != -1:
+            if bcd.find(bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0xfa, 0xfd])) != -1: # Fehlerhafte Antwort abfangen
                 raise serial.SerialException('No response from TRX (power off or CI-V inactive)')
-            if f_m_rx != -1 and bcd[f_m_rx+9] == 0xfd:
+            if f_m_rx != -1 and bcd[f_m_rx+9] == 0xfd: # Mode rx
                 mode_vfo_rx = bcd[f_m_rx+6:f_m_rx+9]
-            if f_m_tx != -1 and bcd[f_m_tx+9] == 0xfd:
+            if f_m_tx != -1 and bcd[f_m_tx+9] == 0xfd: # Mode tx
                 mode_vfo_tx = bcd[f_m_tx+6:f_m_tx+9]
-            return (mode_vfo_rx, mode_vfo_tx), None
+            return (mode_vfo_rx, mode_vfo_tx), None # return Mode-Bytes
         except Exception as e:
             return None, e
 
@@ -290,7 +286,7 @@ class CIV_Worker:
                     print(f'freq: {freq_rx} *** {freq_tx}') # Kontrollausgabe
                     if err_freq is None and freq_rx:
                         return (freq_rx, freq_tx), None
-            msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
+            msg = 'Die Verbindung wird getrennt. Überprüfe den Transceiver\n'
             if err_bcd:
                 msg += f'\nBCD Fehler (read): {err_bcd}'
             if err_freq:
@@ -306,7 +302,7 @@ class CIV_Worker:
                 self.write('mode_tx', mode[0])
                 # return True, None
             if err_mode or err_bcd:
-                # msg = 'Die Verbindung wird getrennt. Überprüfe den Tranceiver\n'
+                # msg = 'Die Verbindung wird getrennt. Überprüfe den Transceiver\n'
                 if err_bcd:
                     msg += f'\nMode lese Fehler (bcd): {err_bcd}'
                 if err_mode:
@@ -327,8 +323,8 @@ class CIV_GUI:
         Erstellt alle UI-Elemente und startet den Controller.
         '''
         self.fenster = tk.Tk()
-        self.fenster.title('IC-705 Split Controler') # Name Titelleiste Fenster / Programmname
-        self.fenster.resizable(False, False) # Größe des fensters wird durch seine inhalte bestimmt
+        self.fenster.title('IC-705 Split Controller') # Name Titelleiste Fenster / Programmname
+        self.fenster.resizable(False, False) # Größe des Fensters wird durch seine Inhalte bestimmt
         self.fenster.protocol('WM_DELETE_WINDOW', self._closeFenster)
         self.control = CIV_Control()
         self.control.config_einlesen()
@@ -358,10 +354,10 @@ class CIV_GUI:
         '''Definition der Farben im Fenster'''
         self.bg_ausgabe = "#000000" # Hintergrund Frequenzanzeige RX / TX
         self.fg_ausgabeRX = "#00ff00" # Schriftfarbe RX
-        self.fg_ausgabeTX = "#ff0000" # Scriftfarbe TX
+        self.fg_ausgabeTX = "#ff0000" # Schriftfarbe TX
         self.bg_dunkel = "#1e293b" # Hintergrund des Fensters
         self.bg_mittel = "#334155" # Hintergrund der Frameinhalte
-        self.rahmen_hell = "#dbdbbd" # Farbe der Frameramen
+        self.rahmen_hell = "#dbdbbd" # Farbe vom Rahmen des Frame-Widget
         self.schrift = "#ffffff" # Farbe der Schrift
 
         self.fenster.configure(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
@@ -381,7 +377,7 @@ class CIV_GUI:
         self.frTitel.rowconfigure(0, weight=1)
         self.lbTitel = tk.Label(self.frTitel,
                                 background=self.bg_mittel,
-                                text='Icom IC-705 Split Controler', # Name des Programms
+                                text='Icom IC-705 Split Controller', # Name des Programms
                                 font=(None, 16, 'bold'),
                                 foreground=self.schrift)
         self.lbTitel.grid(row=0, column=0)
@@ -549,14 +545,14 @@ class CIV_GUI:
         '''Filtern der Benutzereingaben'''
         return value == '' or value == '-' or value.lstrip("-").isdigit()
 
-    def _etOffset_commit(self, event=None): # event wird von bind immer mitgeliefert aber hier nicht verwendet
-        '''einstellen des Benutzeroffset'''
+    def _etOffset_commit(self, event=None): # "event" wird von "bind" immer mitgeliefert, aber hier nicht verwendet
+        '''Einstellen des Benutzeroffset'''
         raw_etOffset = self.etOffset_var.get()
         try:
             value_etOffst = int(raw_etOffset)
             if -1_000_000_000 < value_etOffst < 1_000_000_000:
                 self.worker.offset=value_etOffst
-                self.refresh_lbRXTX_Anzeige() # Aktualliesierung der Anzeige
+                self.refresh_lbRXTX_Anzeige() # Aktualisierung der Anzeige
             else:
                 raise ValueError
         except ValueError as e:
@@ -569,24 +565,25 @@ class CIV_GUI:
         var = int(self.etOffset_var.get())
         step = int(self.worker.step)
         self.etOffset_var.set(var + step * plusminus) 
-        # einstellen der richtung Plus / Minus
+        # einstellen der Richtung Plus / Minus
         self.worker.offset=int(self.etOffset_var.get())
-        self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
+        self.refresh_lbRXTX_Anzeige() # Aktualisierung der Anzeige
 
     def _etOffset_sign_change(self):
+        '''Ändern des  (Offset)'''
         self.worker.offset *= -1
         self.etOffset_var.set(self.worker.offset)
 
     def _cbPorts_auswahl(self, *args):
-        '''einstellen eines Ports'''
+        '''Setzen eines Ports'''
         self.control.serial_port = None if self.cbPorts_var.get() == 'None' else self.cbPorts_var.get()
 
     def _cbStep_auswahl(self, *args):
-        '''Auswahl der Offset schrittweite'''
+        '''Auswahl der Offset Schrittweite'''
         self.worker.step = self.cbStep.get()
 
     def _refresh_ports(self):
-        '''Aktuallisierung der Ports'''
+        '''Aktualisierung der Ports'''
         ports = self.control.abfrage_Ports()
         self.cbPorts.configure(values=ports)
 
@@ -595,7 +592,7 @@ class CIV_GUI:
         self.worker.freq_tracking = True
         self.buTracking.config(background="#ffdd00", text='Tracking Stop', command=self._tracking_off)
         time.sleep(0.1)
-        self.refresh_lbRXTX_Anzeige() # Aktuallisierung der Anzeige
+        self.refresh_lbRXTX_Anzeige() # Aktualisierung der Anzeige
 
     def _tracking_off(self):
         '''Deaktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
@@ -621,11 +618,11 @@ class CIV_GUI:
             if freq is None and err is not None:
                 messagebox.showerror(title='Fehler', message=err)
                 return
-            freqtx, change_sign = self.worker.calc_txfreq(rx=freq[0], tx=0, rx_alt=None)
-            self._update_lbRXTX_Anzeige(freqrx=freq[0], freqtx=freqtx, refresh=True)
+            freq = self.worker.calc_txfreq(rx=freq[0], tx=0, rx_alt=None)
+            self._update_lbRXTX_Anzeige(freqrx=freq[0], freqtx=freq[0], refresh=True)
 
     def start_frequenz_update_thread(self):
-        '''Starten der kontinuirlichen Frequenzabfrage'''
+        '''Starten der kontinuierlichen Frequenzabfrage'''
         if not self.start_ft:
             connect, err = self.control.connect()
             if not connect:
@@ -642,7 +639,7 @@ class CIV_GUI:
                 self.ft.start() # Start des Threads
 
     def stop_frequenz_update_thread(self):
-        '''Stoppen der kontinuirlichen Frequenzabfrage'''
+        '''Stoppen der kontinuierlichen Frequenzabfrage'''
         self.start_ft = False
         if self.worker.freq_tracking:
             self._tracking_off()
@@ -680,7 +677,7 @@ class CIV_GUI:
                 freqrx_alt = freq[0]
                 for i in range(10):
                     '''Warteschleife'''
-                    if not self.start_ft or not self.control.connected: # überprüfung auf abbruch beim warten
+                    if not self.start_ft or not self.control.connected: # Überprüfung auf Abbruch beim warten
                         break
                     time.sleep(0.01)
 
@@ -704,19 +701,19 @@ Release Notes:
 - Bugfixes
 
 Disclaimer:
-Die benutzung des Programms geschied auf eigene Gefahr. Für Schäden an Geräten (Computer, TRX, etc.) \
-und Software, sowie Datenverlussten, übernehme ich keinerlei haftung.\n
+Die Benutzung des Programms geschieht auf eigene Gefahr. Für Schäden an Geräten (Computer, TRX, etc.) \
+und Software, sowie Datenverlusten, übernehme ich keinerlei Haftung.\n
 Erste schritte:
 Nach dem Start als erstes den richtigen Seriellen Port auswählen. Meist in der Geräteverwaltung mit \
 CI-V gekennzeichnet. Danach auf Verbinden klicken. Jetzt wird die Aktuelle RX-Frequenz angezeigt. Zum \
 Nachführen der TX-Frequenz Tracking Start klicken. Nun wird auch die Aktuelle TX-Frequenz angezeigt und \
 automatisch anhand des aktuell eingestelltem Offsets gesetzt.
-Das Offset kann manuell in Herz eingegeben werden oder aber in einzelschritten, einstellbar unter \
+Das Offset kann manuell in Herz eingegeben werden oder aber in Einzelschritten, einstellbar unter \
 Schrittweite, mit "+" und "-" eingestellt werden.\n
 ! ! ! ACHTUNG ! ! !
-Damit das Programm richtig funktioniert ist es erforderlich das sowol 
+Damit das Programm richtig funktioniert ist es erforderlich das sowohl 
 MENU >> Connectors >> CI-V >> CI-V USB Echo Back = OFF
-und bei nutzung via Bluetooth
+und bei Nutzung via Bluetooth
 MENU >> Bluetooth Set >> Data Device Set >> Serialport Funktion = CI-V (Echo Back OFF)
 eingestellt ist.\
 '''
