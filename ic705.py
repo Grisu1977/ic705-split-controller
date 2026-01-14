@@ -11,6 +11,8 @@ Zukünftige Versionen / Ideen:
 - [] Einschalten des Splitbetriebs bei Tracking Start (Optional Split Ja / Nein)
 - [] Hinzufügen eines Tray-Icons
 - [] Optionale Speicherung der Fensterposition
+- [] Anzeige TX / RX
+- [] Bandwahl TX / RX
 - [] Linux Implementierung
 - [] Manuelles setzen der TX/RX Frequenz mit Berechnung und setzen der Offsetfrequenz
 - [] Verbindung via WLAN
@@ -132,7 +134,7 @@ class CIV_Control:
             except Exception as e:
                 print(f'Fehler beim Trennen: {e}') # Kontrollausgabe
 
-    def _message(self, cmd, bcd=None):
+    def _message(self, key, bcd:bytes=None):
         '''Erstellen der CI-V Message'''
         msg = bytearray(self.msg_header)
         cmd = self.msg_cmd[key]
@@ -141,13 +143,13 @@ class CIV_Control:
         msg[4:4] = cmd
         return bytes(msg)
 
-    def bcd_abfrage(self, cmd:list):
+    def bcd_abfrage(self, key:list):
         '''Abfrage Binär Codierte Dezimalzahl'''
         with self.lock:
             try:
                 self.ic705.reset_input_buffer() # Löschen des Empfangspuffers
-                for c in cmd:
-                    msg = self._message(c)
+                for k in key:
+                    msg = self._message(k)
                     self.ic705.write(msg) # Abfrage
                     time.sleep(0.01)
                 time.sleep(0.1)
@@ -156,11 +158,11 @@ class CIV_Control:
             except Exception as e:
                 return None, e
 
-    def write(self, cmd, bcd=None):
+    def write(self, key, bcd=None):
         '''schreiben von Kommandos'''
         with self.lock:
             try:
-                msg = self._message(cmd, bcd)
+                msg = self._message(key, bcd)
                 self.ic705.reset_input_buffer()
                 self.ic705.write(msg)
                 ok_ng = self.ic705.read_until(b'\xfd')
@@ -219,7 +221,7 @@ class CIV_Worker:
         freq = f'{freq:010d}' # Auffüllen mit Nullen
         freq_bytes = [int(freq[i]+freq[i+1], 16) for i in range(0, len(freq)-1, 2)] # Bildung BCD-Bytes: 2 Dezimalziffern = 1 Byte
         freq_bytes.reverse() # BCD-Bytes, niederwertige Dezimalziffern zuerst
-        return freq_bytes
+        return bytes(freq_bytes)
 
     def bcd_to_mode(self, bcd:bytes):
         '''Parsing der ber Mode-Bytes'''
@@ -269,7 +271,7 @@ class CIV_Worker:
             err_freq = None
             err_bcd = None
             while freq_rx is None and err_bcd is None and err_freq is None:
-                bcd, err_bcd = self.bcd_abfrage(cmd=['vfo_rx', 'vfo_tx'])
+                bcd, err_bcd = self.bcd_abfrage(key=['vfo_rx', 'vfo_tx'])
                 if bcd is not None:
                     print(f'bcd_read: {bcd.hex(' ')}') # Kontrollausgabe
                 if err_bcd is None:
