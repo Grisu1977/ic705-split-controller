@@ -48,6 +48,16 @@ class CIV_Control:
         self.controller_Adresse = 0xe0 # Muss in der Regel nicht angepasst werden
         self.offset = 287_500_000 # Default Offset (QO-100)
         self.step = 10 # Default Schrittweite für manuelles nachjustieren
+        self.msg_header = bytes([0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd])
+        self.msg_cmd = {
+            'tx_set':b'\x25\x01', # Setzen Frequenz im TRX (Nicht aktiver VFO)
+            'vfo_rx':b'\x25\x00', # Abfrage Frequenz (Aktiver VFO)
+            'vfo_tx':b'\x25\x01', # Abfrage Frequenz (Nicht aktiver VFO)
+            'tx':b'\x1c\x00', # is TX / RX 
+            'xfc':b'\x1c\x02', # is XTC
+            'mode_rx':b'\x26\x00', # Mode + Filter (usb, lsb, cw, ...)
+            'mode_tx':b'\x26\x01', # Mode + Filter (usb, lsb, cw, ...)
+            }
 
     def config_einlesen(self):
         '''Einlesen der config.ini'''
@@ -124,30 +134,11 @@ class CIV_Control:
 
     def _message(self, cmd, bcd=None):
         '''Erstellen der CI-V Message'''
-        msg=[0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd]
-        if cmd == 'tx_set': # Setzen Frequenz im TRX (Nicht aktiver VFO)
-            msg[4:4] = [0x25, 0x01] + bcd
-        elif cmd == 'vfo_rx': # Abfrage Frequenz (Aktiver VFO)
-            msg[4:4] = [0x25, 0x00]
-        elif cmd == 'vfo_tx': # Abfrage Frequenz (Nicht aktiver VFO)
-            msg[4:4] = [0x25, 0x01]
-        elif cmd == 'tx': # is TX / RX 
-            msg[4:4] = [0x1c, 0x00]
-        elif cmd == 'xfc': # is XTC
-            msg[4:4] = [0x1c, 0x02]
-        elif cmd == 'mode_rx': # Mode + Filter (usb, lsb, cw, ...)
-            msg[4:4] = [0x26, 0x00]
-        elif cmd == 'mode_tx': # Mode + Filter (usb, lsb, cw, ...)
-            bcd_mode = [0x26, 0x01]
-            if bcd is None:
-                msg[4:4] = bcd_mode
-            else:
-                bcd_mode.extend(bcd)
-                msg[4:4] = bcd_mode
-        elif cmd == 'data': # Data on / off + Filter
-            msg[4:4] = [0x1a, 0x06]
-        elif cmd == 'split': # is Split on / off
-            msg[4:4] = [0x0f]
+        msg = bytearray(self.msg_header)
+        cmd = self.msg_cmd[key]
+        if bcd:
+            cmd += bcd
+        msg[4:4] = cmd
         return bytes(msg)
 
     def bcd_abfrage(self, cmd:list):
@@ -165,7 +156,7 @@ class CIV_Control:
             except Exception as e:
                 return None, e
 
-    def write(self, cmd, bcd):
+    def write(self, cmd, bcd=None):
         '''schreiben von Kommandos'''
         with self.lock:
             try:
