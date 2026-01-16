@@ -4,26 +4,30 @@ Ein grafisches Python-Tool zur Steuerung und automatischen Nachführung des Spli
 **Icom IC-705** über die **CI-V Schnittstelle**.
 
 Das Programm liest kontinuierlich die RX-Frequenz des aktiven VFO aus und setzt – abhängig vom
-eingestellten Offset – automatisch die TX-Frequenz auf dem nicht aktiven VFO.  
-Der Fokus liegt auf einfachem, stabilem Betrieb und klarer Bedienung.
+eingestellten Offset – automatisch die TX-Frequenz auf dem sekundären VFO.
+Die Anzeige und Logik orientieren sich dabei konsequent am tatsächlichen Verhalten des Transceivers.
 
-> Hinweis: Die README beschreibt den aktuellen Entwicklungsstand (`main`).
+> ### Hinweis:
+> Die README beschreibt den aktuellen Entwicklungsstand (`master`).
 > Die letzte veröffentlichte Version ist v1.0.0.
-
 
 ---
 
-## Funktionen
+## Funktionsübersicht
 
 - Anzeige der aktuellen RX- und TX-Frequenz
+- Unterstützung des Split-Betriebs
+- Split OFF → TX auf aktivem VFO (VFO A)
+- Split ON → TX auf sekundärem VFO (VFO B)
 - Automatische TX-Frequenz-Nachführung (Tracking)
 - Frei einstellbarer Frequenz-Offset (positiv / negativ)
-- Feinjustierung des Offsets über Schrittweite
-- Serielle CI-V Kommunikation (USB / virtuell COM)
-- Grafische Oberfläche mit Tkinter
-- Speicherung der letzten Einstellungen in einer `config.ini`
-- Statusanzeige für Verbindungszustand
-- Automatische Umschaltung des VFO-Modes von primär nach sekundär bei aktivem Tracking.
+- Feinjustierung des Offsets über wählbare Schrittweite
+- Anzeige des aktuellen Split-Status
+- Anzeige des Verbindungsstatus zum Transceiver
+- Automatische Mode-Synchronisation zwischen VFO A und VFO B
+- Serielle CI-V-Kommunikation (USB / virtueller COM-Port (Bluetooth))
+- Grafische Benutzeroberfläche mit Tkinter
+- Persistente Speicherung der letzten Einstellungen in einer config.ini
 
 ---
 
@@ -62,33 +66,36 @@ MENU → Set → Bluetooth Set → Data Device Set → Serialport Funktion = CI-
 
 - Feinjustierung mit + / – und Schrittweite
 
+- Split kann manuell ein- oder ausgeschaltet werden
+  (das Programm erzwingt keinen Split-Betrieb)
+
 ## Konfiguration
 
-Die Datei config.ini wird automatisch erzeugt und enthält u. a.:
+Die Datei config.ini wird beim Beenden automatisch geschrieben und beim Start wieder eingelesen.
+Gespeichert werden unter anderem:
 
-Letzten verwendeten COM-Port
-Baudrate
-CI-V Adresse
-Offset und Schrittweite
+- letzter verwendeter COM-Port
+- Baudrate
+- CI-V-Adresse
+- Offset und Schrittweite
 
-Manuelle Änderungen sind möglich, erfolgen aber auf eigene Verantwortung.
-Bei Problemen kann die Datei gefahrlos gelöscht werden.
+Manuelle Änderungen sind möglich, erfolgen jedoch auf eigene Verantwortung.
+Bei Problemen kann die Datei jederzeit gefahrlos gelöscht werden.
 
 ## Bekannte Einschränkungen
 
 Aktuell nur für Windows getestet
-Linux-Unterstützung ist geplant
+Linux-Unterstützung bedingt möglich
 WLAN-Verbindung noch nicht implementiert
 
 ## Geplante Erweiterungen
 
-Linux-Implementierung
-Speicherung der Fensterposition
-Tray-Icon
-Manuelles Setzen von RX/TX-Frequenzen
-Optionale automatische Aktivierung von Split
-CI-V über WLAN
-Erweiterte Offset-Validierung
+- Linux-Implementierung
+- Speicherung der Fensterposition
+- Tray-Icon
+- Manuelles Setzen von RX/TX-Frequenzen
+- CI-V-Kommunikation über WLAN
+- Erweiterte Offset-Validierung
 
 ## Lizenz & Haftungsausschluss
 

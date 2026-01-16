@@ -8,7 +8,7 @@ Einstellungen im TRX:
 - CI-V USB Echo Back muss 'off' sein
 Zukünftige Versionen / Ideen:
 - [✓] Automatisches angleichen des Modes VFO A / VFO B bei wechsel
-- [] Einschalten des Splitbetriebs bei Tracking Start (Optional Split Ja / Nein)
+- [✓] Einschalten des Splitbetriebs bei Tracking Start (Optional Split Ja / Nein)
 - [] Hinzufügen eines Tray-Icons
 - [] Optionale Speicherung der Fensterposition
 - [] Anzeige TX / RX
@@ -59,7 +59,11 @@ class CIV_Control:
             'xfc':b'\x1c\x02', # is XTC
             'mode_rx':b'\x26\x00', # Mode + Filter (usb, lsb, cw, ...)
             'mode_tx':b'\x26\x01', # Mode + Filter (usb, lsb, cw, ...)
+            'is_split':b'\x0f', # Split on / off ?
+            'split_off':b'\x0f\x00', # Split off
+            'split_on':b'\x0f\x01' # Split on
             }
+        self.split = False # Status Split
 
     def config_einlesen(self):
         '''Einlesen der config.ini'''
@@ -67,21 +71,23 @@ class CIV_Control:
         if Path(self.configfile).is_file():
             config.read(self.configfile)
             if not config['Transceiver']['Last_COM_Port'] == 'None':
-                self.serial_port = config['Transceiver']['Last_COM_Port']
-            self.baud_rate = int(config['Transceiver']['Baud_Rate'])
-            self.trx_Adresse = int(config['Transceiver']['TRX_Adresse'],16)
-            self.offset = int(config['Offset']['Last_Offset'])
-            self.step = config['Offset']['Last_Step']
+                self.serial_port = config['Transceiver']['last_com_port']
+            self.baud_rate = int(config['Transceiver']['baud_rate'])
+            self.trx_Adresse = int(config['Transceiver']['trx_adresse'],16)
+            self.offset = int(config['Offset']['last_offset'])
+            self.step = config['Offset']['last_step']
+            self.split = True if config['Transceiver']['split'] == 'True' else False
 
     def config_schreiben(self):
         '''Parsen und Schreiben der config.ini'''
         config = configparser.ConfigParser()
         config['Transceiver'] = {
-            'Last_COM_Port':str(self.serial_port),
-            'Baud_Rate':self.baud_rate,
-            'TRX_Adresse':f'{self.trx_Adresse:02x}' # Speichern als zweistellige HEX-Zahl
+            'last_com_port':f'{self.serial_port}',
+            'baud_rate':self.baud_rate,
+            'trx_adresse':f'{self.trx_Adresse:02x}', # Speichern als zweistellige HEX-Zahl
+            'split':self.split,
             }
-        config['Offset'] = {'Last_Offset':self.offset,'Last_Step':self.step}
+        config['Offset'] = {'last_offset':self.offset,'last_step':self.step}
         with open(self.configfile, 'w') as cf: # öffnen und schreiben der *.ini
             cf.write( # Kommentarblock in der Datei
                 '; #==================================================#\n' \
@@ -160,17 +166,20 @@ class CIV_Control:
 
     def write(self, key, bcd=None):
         '''schreiben von Kommandos'''
-        with self.lock:
-            try:
-                msg = self._message(key, bcd)
-                self.ic705.reset_input_buffer()
-                self.ic705.write(msg)
-                ok_ng = self.ic705.read_until(b'\xfd')
-                print(f'###   ***   {ok_ng}   ***   ###') # Kontrollausgabe
-                if ok_ng[len(ok_ng)-2] == 0xfa:
-                    raise Exception('Fehler 0xFA beim schreiben')
-            except Exception as e:
-                print(f'Fehler beim Frequenz setzen: {e}') # Kontrollausgabe
+        if self.connected:
+            with self.lock:
+                try:
+                    msg = self._message(key, bcd)
+                    self.ic705.reset_input_buffer()
+                    self.ic705.write(msg)
+                    ok_ng = self.ic705.read_until(b'\xfd')
+                    print(f'###   ***   {ok_ng}   ***   ###') # Kontrollausgabe
+                    if ok_ng[len(ok_ng)-2] == 0xfa:
+                        raise Exception('Fehler 0xFA beim schreiben')
+                except serial.PortNotOpenError as e:
+                    print(f'Fehler: {e}') # Kontrollausgabe
+                except Exception as e:
+                    print(f'Fehler beim Frequenz setzen: {e}') # Kontrollausgabe
 
     def abfrage_Ports(self):
         '''Abfrage "aller" aktiven Ports im System'''
@@ -204,13 +213,11 @@ class CIV_Worker:
                 if f_rx != -1 and bcd[f_rx + 11] == 0xfd: # Parsing rx Bytes
                     freq_rx = bcd[f_rx+10:f_rx+5:-1]
                     freq_rx = freq_rx.hex()
-                if self.freq_tracking and f_tx != -1 and bcd[f_tx + 11] == 0xfd: # Parsing tx Bytes
+                if f_tx != -1 and bcd[f_tx + 11] == 0xfd: # Parsing tx Bytes
                     freq_tx = bcd[f_tx+10:f_tx+5:-1]
                     freq_tx = freq_tx.hex()
                 if freq_rx and freq_tx:
                     return int(freq_rx), int(freq_tx), None # Ausgabe der Frequenz in Hz als ganze Zahl
-                elif freq_rx:
-                    return int(freq_rx), None, None # Ausgabe der Frequenz in Hz als ganze Zahl
                 else:
                     return None, None, None
             except Exception as e:
@@ -265,7 +272,7 @@ class CIV_Worker:
         return None, change_sign
 
     def freq_update(self, start_ft, connected):
-        '''Abfrage der Frequenzen von "vfo a" und "vfo b"'''
+        '''Abfrage der Frequenzen von "vfo a(b)" und "vfo b(a)"'''
         if start_ft and connected:
             freq_rx = None
             err_freq = None
@@ -304,7 +311,31 @@ class CIV_Worker:
                 input()
                 # return False, msg
         # return None, None
-    
+
+    def is_split(self):
+        '''Abfrage ob am TRX Split on / off ist'''
+        find_split_on = bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0x0f, 0x01, 0xfd])
+        find_split_off = bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0x0f, 0x00, 0xfd])
+        bcd, err_bcd = self.bcd_abfrage(['is_split'])
+        try:
+            s_on = bcd.find(find_split_on)
+            s_off = bcd.find(find_split_off)
+            if bcd.find(bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0xfa, 0xfd])) != -1: # Fehlerhafte Antwort abfangen
+                raise serial.SerialException('No response from TRX (power off or CI-V inactive)')
+            if s_on != -1:
+                return True
+            elif s_off != -1:
+                return False
+            else:
+                raise Exception('Unklarer Fehler in is_split')
+        except Exception as e:
+            print(f'FEHLER is-split(): {e}')
+            return None
+
+    def set_split(self, on_off=None):
+        key = 'split_on' if on_off else 'split_off'       
+        self.write(key)
+
     def is_tx_enable(self):
         pass
 
@@ -341,9 +372,6 @@ class CIV_GUI:
 
     def _setup_user_interface(self):
 
-        style = ttk.Style()
-        style.theme_use('clam')
-
         '''Definition der Farben im Fenster'''
         self.bg_ausgabe = "#000000" # Hintergrund Frequenzanzeige RX / TX
         self.fg_ausgabeRX = "#00ff00" # Schriftfarbe RX
@@ -352,10 +380,20 @@ class CIV_GUI:
         self.bg_mittel = "#334155" # Hintergrund der Frameinhalte
         self.rahmen_hell = "#dbdbbd" # Farbe vom Rahmen des Frame-Widget
         self.schrift = "#ffffff" # Farbe der Schrift
+        self.schrift_dis = "#aaaaaa" # Farbe der Schrift
 
-        self.fenster.configure(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.map('My.TCheckbutton',
+                  background=[('active', self.bg_mittel),('disabled', self.bg_mittel),
+                              ('selected', self.bg_mittel), ('!selected', self.bg_mittel)],
+                  foreground=[('active',self.schrift), ('disabled', self.schrift_dis),
+                              ('selected', self.schrift), ('!selected', self.schrift)]
+                              )
+
 
         '''Bau der Benutzeroberfläche'''
+        self.fenster.config(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
         '''Titelframe'''
         self.frTitel = tk.Frame(self.fenster,
                                 background=self.bg_mittel,
@@ -441,8 +479,8 @@ class CIV_GUI:
         self.frAnzeige.grid(row=2, column=0, padx=5, pady=5, sticky='ew')
         self.frAnzeige.rowconfigure(0, weight=1)
         self.frAnzeige.rowconfigure(1, weight=1)
-        self.frAnzeige.columnconfigure(0, weight=1, uniform='col')
-        self.frAnzeige.columnconfigure(1, weight=1, uniform='col')
+        self.frAnzeige.columnconfigure(0, weight=1, uniform='frAnzeige')
+        self.frAnzeige.columnconfigure(1, weight=1, uniform='frAnzeige')
         self.lbRX = tk.Label(self.frAnzeige,
                              text='RX Frequenz',
                              font=(None, 12, 'bold'),
@@ -482,8 +520,8 @@ class CIV_GUI:
                                  highlightbackground=self.rahmen_hell,
                                  highlightthickness=1)
         self.frOffset.grid(row=3, column=0, padx=5, pady=5, sticky='ew')
-        self.frOffset.columnconfigure(0, weight=1, uniform='col')
-        self.frOffset.columnconfigure(1, weight=1, uniform='col')
+        self.frOffset.columnconfigure(0, weight=1, uniform='frOffset')
+        self.frOffset.columnconfigure(1, weight=1, uniform='frOffset')
         self.lbOffset = tk.Label(self.frOffset,
                                  background=self.bg_mittel,
                                  text='Frequenz - Offset (Hz)',
@@ -496,9 +534,10 @@ class CIV_GUI:
                                          font=(None, 8),
                                          foreground=self.schrift)
         self.lbOffset_schritt.grid(row=0, column=1, sticky='w')
-        self.frOffset_uli = tk.Frame(self.frOffset,
-                                     background=self.bg_mittel)
-        self.frOffset_uli.grid(row=1, column=0, padx=2, pady=0, sticky='w')
+        self.frOffset_uli = tk.Frame(self.frOffset, background=self.bg_mittel)
+        self.frOffset_uli.grid(row=1, column=0, padx=2, pady=0, sticky='nsew')
+        self.frOffset_uli.columnconfigure(1,weight=1)
+        self.frOffset_uli.columnconfigure(2,weight=1)
         self.etOffset_var = tk.StringVar(value=self.worker.offset)
         self.etOffset = tk.Entry(self.frOffset_uli,
                                  font=('Courier New', 12),
@@ -512,27 +551,35 @@ class CIV_GUI:
 
         self.buOffset_plus = tk.Button(self.frOffset_uli,
                                        command=lambda:self._etOffset_pm(1),
-                                       text='+',
-                                       width=2,
-                                       height=1)
-        self.buOffset_plus.grid(row=0, column=2, padx=1, pady=5)
+                                       text='+')
+        self.buOffset_plus.grid(row=0, column=2, padx=1, pady=5, sticky='ew')
         self.buOffset_minus = tk.Button(self.frOffset_uli,
                                         command=lambda:self._etOffset_pm(-1),
-                                        text='-',
-                                        width=2,
-                                        height=1)
-        self.buOffset_minus.grid(row=0, column=1, padx=1, pady=5)
+                                        text='-')
+        self.buOffset_minus.grid(row=0, column=1, padx=1, pady=5, sticky='ew')
 
-        self.frOffset_ure = tk.Frame(self.frOffset)
-        self.frOffset_ure.grid(row=1, column=1, padx=2, pady=0, sticky='w')
+        self.frOffset_ure = tk.Frame(self.frOffset,background=self.bg_mittel)
+        self.frOffset_ure.grid(row=1, column=1, padx=2, pady=0, sticky='nsew')
+        self.frOffset_ure.rowconfigure(0, weight=1)
+        self.frOffset_ure.columnconfigure(1, weight=1)
         self.cbStep_var = tk.StringVar(value=self.worker.step)
         self.cbStep = ttk.Combobox(self.frOffset_ure,
                                       values=[1,10,100,1_000,10_000,100_000,1_000_000],
                                       textvariable=self.cbStep_var,
                                       state='readonly',
                                       width=12)
-        self.cbStep.grid(row=0, column=0)
+        self.cbStep.grid(row=0, column=0, sticky='w')
         self.cbStep.bind('<<ComboboxSelected>>', self._cbStep_auswahl)
+
+        self.checkbu_Split_bool = tk.BooleanVar()
+        self.checkbu_Split_bool.set(self.control.split)
+        self.checkbu_Split = ttk.Checkbutton(self.frOffset_ure,
+                                            style='My.TCheckbutton',
+                                            state='active',
+                                            text='Split (on / off)', 
+                                            variable=self.checkbu_Split_bool,
+                                            command=lambda:self.worker.set_split(self.checkbu_Split_bool.get()))
+        self.checkbu_Split.grid(row=0, column=1)
 
     def _etOffset_filter(self, value):
         '''Filtern der Benutzereingaben'''
@@ -557,9 +604,8 @@ class CIV_GUI:
         '''Feinjustierung des Offsets'''
         var = int(self.etOffset_var.get())
         step = int(self.worker.step)
-        self.etOffset_var.set(var + step * plusminus) 
-        # einstellen der Richtung Plus / Minus
-        self.worker.offset=int(self.etOffset_var.get())
+        self.etOffset_var.set(var + step * plusminus)
+        self.worker.offset=int(self.etOffset_var.get()) # einstellen der Richtung Plus / Minus
         self.refresh_lbRXTX_Anzeige() # Aktualisierung der Anzeige
 
     def _etOffset_sign_change(self):
@@ -578,7 +624,7 @@ class CIV_GUI:
     def _refresh_ports(self):
         '''Aktualisierung der Ports'''
         ports = self.control.abfrage_Ports()
-        self.cbPorts.configure(values=ports)
+        self.cbPorts.config(values=ports)
 
     def _tracking_on(self):
         '''Aktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
@@ -591,18 +637,19 @@ class CIV_GUI:
         '''Deaktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
         self.worker.freq_tracking = False
         self.buTracking.config(background="#0000ff", text='Tracking Start', command=self._tracking_on)
-        self.lbTX_Anzeige_text.set(value='off') # TX-Anzeige auf 'off' schalten
 
     def _update_lbRXTX_Anzeige(self, freqrx, freqtx=None, refresh=False):
         '''Anzeige der Frequenzen'''
         if self.start_ft and self.control.connected:
             mhzrx = freqrx / 1_000_000
+            mhztx = freqtx / 1_000_000 if self.control.split else mhzrx # Entscheidung welche TX-VFO-Frequenz angezeigt wird. Aktiv oder Sub
             self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
             if self.worker.freq_tracking and freqtx is not None:
-                mhztx = freqtx / 1_000_000
                 self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
-                if refresh:
+                if refresh and self.control.split:
                     self.worker.txfreq_set(freqtx, self.start_ft, self.control.connected)
+                return
+            self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
 
     def refresh_lbRXTX_Anzeige(self):
         '''Aktuallisiert die TX-Anzeige'''
@@ -611,8 +658,8 @@ class CIV_GUI:
             if freq is None and err is not None:
                 messagebox.showerror(title='Fehler', message=err)
                 return
-            freq = self.worker.calc_txfreq(rx=freq[0], tx=0, rx_alt=None)
-            self._update_lbRXTX_Anzeige(freqrx=freq[0], freqtx=freq[0], refresh=True)
+            freqtx, change_sign = self.worker.calc_txfreq(rx=freq[0], tx=0, rx_alt=None)
+            self._update_lbRXTX_Anzeige(freqrx=freq[0], freqtx=freqtx, refresh=True)
 
     def start_frequenz_update_thread(self):
         '''Starten der kontinuierlichen Frequenzabfrage'''
@@ -624,6 +671,8 @@ class CIV_GUI:
                 self.ft = threading.Thread(target=self.frequenz_update_thread, daemon=True) 
                 self.start_ft = True
                 '''Einstellen der Bedienelemente'''
+                self.control.split = False if self.checkbu_Split_bool.get() else True
+                self.worker.set_split(False if self.control.split else True)
                 self.buVerbinden.config(text='Trennen', command=self.stop_frequenz_update_thread, background='#ff0000')
                 self.status_indikator.itemconfig(self.status_indikator_oval, fill='#00ff00')
                 self.buTracking.config(state='normal')
@@ -636,6 +685,7 @@ class CIV_GUI:
         self.start_ft = False
         if self.worker.freq_tracking:
             self._tracking_off()
+        self.lbTX_Anzeige_text.set(value='off') # TX-Anzeige auf 'off' schalten
         self.control.disconnect()
         '''Einstellen der Bedienelemente'''
         self.cbPorts.config(state='readonly')
@@ -653,21 +703,24 @@ class CIV_GUI:
             s_new = int(time.time())
             delta_s = s_new - s_old
             if  delta_s >= 1:
-                self.worker.mode_switch()
+                self.worker.mode_switch() # Check ob beide VFO gleichn Mode haben
                 s_old = int(time.time())
+            self.control.split = self.worker.is_split()
+            self.fenster.after(0, lambda:self.checkbu_Split_bool.set(self.control.split))
             freq, err = self.worker.freq_update(self.start_ft, self.control.connected)
             if freq is None and err is not None:
                 self.fenster.after(0, self.stop_frequenz_update_thread) # Bei Fehler Stopp des UpdateThreads
                 self.fenster.after(0, lambda:messagebox.showerror(title='Fehler', message=err))
                 break
             else:
-                freqtx, change_sign = self.worker.calc_txfreq(freq[0], freq[1], freqrx_alt)
-                if change_sign:
-                    self.fenster.after(0, self._etOffset_sign_change)
-                if freqtx is not None:
-                    self.worker.txfreq_set(freqtx, self.start_ft, self.control.connected)
-                self.fenster.after(0, self._update_lbRXTX_Anzeige, freq[0], freq[1])
-                freqrx_alt = freq[0]
+                if freq is not None:
+                    freqtx, change_sign = self.worker.calc_txfreq(freq[0], freq[1], freqrx_alt)
+                    if change_sign:
+                        self.fenster.after(0, self._etOffset_sign_change)
+                    if freqtx is not None and self.control.split:
+                        self.worker.txfreq_set(freqtx, self.start_ft, self.control.connected)
+                    self.fenster.after(0, self._update_lbRXTX_Anzeige, freq[0], freq[1])
+                    freqrx_alt = freq[0]
                 for i in range(10):
                     '''Warteschleife'''
                     if not self.start_ft or not self.control.connected: # Überprüfung auf Abbruch beim warten
