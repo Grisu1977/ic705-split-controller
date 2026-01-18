@@ -9,7 +9,7 @@ Die Anzeige und Logik orientieren sich dabei konsequent am tatsächlichen Verhal
 
 > ### Hinweis:
 > Die README beschreibt den aktuellen Entwicklungsstand (`master`).
-> Die letzte veröffentlichte Version ist v1.0.0.
+> Die letzte veröffentlichte Version ist v1.1.0.
 
 ---
 
@@ -106,3 +106,15 @@ Für Schäden an Hard- oder Software sowie Datenverluste wird keine Haftung übe
 
 Pascal Pfau (DH1PV)
 eMail: dh1pv@darc.de
+
+---
+## Mitarbeit
+
+Dieses Projekt wird ausschließlich vom Autor gepflegt.
+
+Pull Requests werden in der Regel nicht angenommen und nur nach vorheriger
+Absprache berücksichtigt. Vorschläge, Hinweise oder Fehlermeldungen können
+gerne über Issues eingereicht werden.
+
+Es besteht kein Anspruch darauf, dass Beiträge übernommen werden.
+---

@@ -8,3 +8,12 @@
 - Grafische Benutzeroberfläche (GUI)
 - Fehlerbehandlung und Statusmeldungen über Messageboxen
 - Konfigurationsspeicherung über config.ini
+---
+## [1.1.0] – 2026-01-18
+- Unterstützung des Split-Betriebs
+- Automatische Mode-Synchronisation zwischen VFO A und VFO B
+- Synkronisationsinterval über config.ini jetzt anpassbar
+- Aktuallisierung der Hilfe im Programm
+- Aktuallisierung der readme.me
+- Bugfixes und verbesserung der stabilität
+- CIV_Control.write() jetzt flexibler
