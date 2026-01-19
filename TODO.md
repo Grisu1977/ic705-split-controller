@@ -4,6 +4,7 @@
 - [ ] Hinzufügen eines Menüs
 - [ ] Anzeige des Modes VFO A(B)
 - [ ] Hinzufügen eines Tray-Icons
+- [x] Speicherung der Fensterposition
 - [ ] Optionale Speicherung der Fensterposition
 - [ ] Anzeige TX / RX
 - [ ] Bandwahl TX / RX
@@ -12,16 +13,16 @@
 - [ ] Verbindung via WLAN
 - [ ] Verbesserung des Filters ob gültiger Offset (Liegt Frequenz im Gültigen Bereich vom TRX)
 
-### Geplante Menuestruktur
+### Geplante Menüstruktur
 
 > [!NOTE]
-> - <ins>Menu</ins>
+> - <ins>Menü</ins>
 >     - Datei
 >         - Verbinden / Trennen
 >         - Beenden
 >     - Optionen
 >         - Immer im Vordergrund
->         - Fensterposition Speichern
+>         - Fensterposition speichern (Ein / Aus)
 >         - Transverter-Modus (Ein / Aus)
 >     - TRX
 >         - TX-Leistung einstellen

@@ -68,10 +68,13 @@ class CIV_Control:
             self.step = int(config['Offset']['last_step'])
             self.split = True if config['Transceiver']['split'] == 'True' else False
             self.queries_p_sec = int(config['Transceiver']['abfragen_pro_sekunde'])
+            fenster_pos = config['Allgemein']['fensterposition']
+            return fenster_pos
 
-    def config_schreiben(self):
+    def config_schreiben(self, x, y):
         '''Parsen und Schreiben der config.ini'''
         config = configparser.ConfigParser()
+        config['Allgemein'] = {'fensterposition':f'{x}+{y}'}
         config['Transceiver'] = {
             'last_com_port':f'{self.serial_port}',
             'baud_rate':self.baud_rate,
@@ -339,7 +342,8 @@ class CIV_GUI:
         self.fenster.resizable(False, False) # Größe des Fensters wird durch seine Inhalte bestimmt
         self.fenster.protocol('WM_DELETE_WINDOW', self._close)
         self.control = CIV_Control()
-        self.control.config_einlesen()
+        xy = self.control.config_einlesen()
+        self.fenster.geometry(f'+{xy}')
         self.start_ft = False
         self.worker = CIV_Worker(bcd_abfrage=self.control.bcd_abfrage,
                                  write=self.control.write,
@@ -356,8 +360,10 @@ class CIV_GUI:
         self.control.offset = self.worker.offset
         self.control.step = self.worker.step
         self.control.split = self.checkbu_Split_bool.get()
+        x = self.fenster.winfo_x()
+        y = self.fenster.winfo_y()
         self.fenster.destroy()
-        self.control.config_schreiben()
+        self.control.config_schreiben(x, y)
 
     def _setup_user_interface(self):
 
