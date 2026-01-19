@@ -1,21 +1,10 @@
 '''
-Docstring
 Icom IC-705 Split Controller
 Autor: Pascal Pfau (DH1PV)
 Benötigte Bibliotheken:
 - pip install pyserial
 Einstellungen im TRX:
 - CI-V USB Echo Back muss 'off' sein
-Zukünftige Versionen / Ideen:
-- [] Anzeige des Modes VFO A(B)
-- [] Hinzufügen eines Tray-Icons
-- [] Optionale Speicherung der Fensterposition
-- [] Anzeige TX / RX
-- [] Bandwahl TX / RX
-- [] Linux Implementierung
-- [] Manuelles setzen der TX/RX Frequenz mit Berechnung und setzen der Offsetfrequenz
-- [] Verbindung via WLAN
-- [] Verbesserung des Filters ob gültiger Offset (Liegt Frequenz im Gültigen Bereich vom TRX)
 '''
 
 import time
@@ -30,6 +19,7 @@ from pathlib import Path
 
 
 version = '1.1.0'
+name = 'Icom IC-705 Split Controller'
 
 
 class CIV_Control:    
@@ -345,7 +335,7 @@ class CIV_GUI:
         Erstellt alle UI-Elemente und startet den Controller.
         '''
         self.fenster = tk.Tk()
-        self.fenster.title('IC-705 Split Controller') # Name Titelleiste Fenster / Programmname
+        self.fenster.title(f'{name} - v{version}') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False) # Größe des Fensters wird durch seine Inhalte bestimmt
         self.fenster.protocol('WM_DELETE_WINDOW', self._close)
         self.control = CIV_Control()
@@ -407,7 +397,7 @@ class CIV_GUI:
         self.frTitel.rowconfigure(0, weight=1)
         self.lbTitel = tk.Label(self.frTitel,
                                 background=self.bg_mittel,
-                                text='Icom IC-705 Split Controller', # Name des Programms
+                                text=name, # Name des Programms
                                 font=(None, 16, 'bold'),
                                 foreground=self.schrift)
         self.lbTitel.grid(row=0, column=0)
@@ -733,7 +723,7 @@ class CIV_GUI:
     def hilfe(self):
         '''Generierung eines Hilfe- und Infofensters'''
         info = f'''\
-Icom IC-705 Split Controller v{version}
+{name} v{version}
 Autor: Pascal Pfau (DH1PV)
 eMail: dh1pv@darc.de
 ©2026\n
