@@ -15,7 +15,7 @@
 ### Geplante Menuestruktur
 
 > [!NOTE]
-> - Menu
+> - <ins>Menu</ins>
 >     - Datei
 >         - Verbinden / Trennen
 >         - Beenden
@@ -27,7 +27,7 @@
 >         - TX-Leistung einstellen
 >
 >
-> - Tray-Icon
+> - <ins>Tray-Icon</ins>
 >   - Verbinden / Trennen
 >   - Tracking Start / Stop
 >   - Split
