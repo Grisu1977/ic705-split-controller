@@ -5,27 +5,32 @@
 - [ ] Anzeige des Modes VFO A(B)
 - [ ] Hinzufügen eines Tray-Icons
 - [x] Speicherung der Fensterposition
-- [ ] Optionale Speicherung der Fensterposition
+- [x] Speicherung der Fensterposition optional machen
+- [ ] Transverter-Modus
 - [ ] Anzeige TX / RX
 - [ ] Bandwahl TX / RX
 - [ ] Linux Implementierung
 - [ ] Manuelles setzen der TX/RX Frequenz mit Berechnung und setzen der Offsetfrequenz
 - [ ] Verbindung via WLAN
 - [ ] Verbesserung des Filters ob gültiger Offset (Liegt Frequenz im Gültigen Bereich vom TRX)
+- [ ] Fenster für separate einstellungen
 
 ### Geplante Menüstruktur
 
 > [!NOTE]
 > - <ins>Menü</ins>
->     - Datei
->         - Verbinden / Trennen
->         - Beenden
->     - Optionen
->         - Immer im Vordergrund
->         - Fensterposition speichern (Ein / Aus)
->         - Transverter-Modus (Ein / Aus)
->     - TRX
->         - TX-Leistung einstellen
+>   - Datei
+>       - [ ] Einstellungen
+>       - [x] Beenden
+>   - Optionen
+>       - [x] Immer im Vordergrund
+>       - [x] Fensterposition speichern (Ein / Aus)
+>       - [X] Transverter-Modus (Ein / Aus)
+>   - TRX
+>       - [x] Verbinden / Trennen
+>       - [x] Tracking Start / Stop
+>       - [x] Split on / off
+>       - [ ] TX-Leistung einstellen
 >
 >
 > - <ins>Tray-Icon</ins>

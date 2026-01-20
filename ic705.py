@@ -39,6 +39,7 @@ class CIV_Control:
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
         self.controller_Adresse = 0xe0 # Muss in der Regel nicht angepasst werden
         self.offset = 287_500_000 # Default Offset (QO-100)
+        self.transverter = {'up':1_968_000_000, 'down':10_345_000_000}
         self.step = 10 # Default Schrittweite für manuelles nachjustieren
         self.msg_header = bytes([0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd])
         self.msg_cmd = {
@@ -60,30 +61,43 @@ class CIV_Control:
         config = configparser.ConfigParser()
         if Path(self.configfile).is_file():
             config.read(self.configfile)
-            if not config['Transceiver']['Last_COM_Port'] == 'None':
-                self.serial_port = config['Transceiver']['last_com_port']
-            self.baud_rate = int(config['Transceiver']['baud_rate'])
-            self.trx_Adresse = int(config['Transceiver']['trx_adresse'],16)
-            self.offset = int(config['Offset']['last_offset'])
-            self.step = int(config['Offset']['last_step'])
-            self.split = True if config['Transceiver']['split'] == 'True' else False
-            self.queries_p_sec = int(config['Transceiver']['abfragen_pro_sekunde'])
-            fenster_pos = config['Allgemein']['fensterposition']
-            return fenster_pos
+            self.serial_port = config.get('Transceiver', 'last_com_port') or None
+            self.baud_rate = config.getint('Transceiver', 'baud_rate')
+            self.trx_Adresse = int(config.get('Transceiver', 'trx_adresse'), 16)
+            self.offset = config.getint('Offset', 'last_offset')
+            self.step = config.getint('Offset', 'last_step')
+            self.split = config.getboolean('Transceiver', 'split')
+            self.queries_p_sec = config.getint('Transceiver', 'abfragen_pro_sekunde')
+            xy = config.get('Allgemein', 'fensterposition', fallback=None) or None
+            save_win_pos = config.getboolean('Allgemein', 'fensterposition_speichern', fallback=False) or False
+            on_top = config.getboolean('Allgemein', 'on_top', fallback=False) or False
+            self.transverter['up'] = config.getint('Offset', 'transverter_up')
+            self.transverter['down'] = config.getint('Offset', 'transverter_down')
+            return xy, save_win_pos, on_top
+        return None, False, False
 
-    def config_schreiben(self, x, y):
+    def config_schreiben(self, win_save, x, y, on_top):
         '''Parsen und Schreiben der config.ini'''
         config = configparser.ConfigParser()
-        config['Allgemein'] = {'fensterposition':f'{x}+{y}'}
+        config['Allgemein'] = {
+            'fensterposition_speichern':win_save,
+            'fensterposition':f'{x}+{y}' if win_save else '',
+            'on_top':on_top
+            }
         config['Transceiver'] = {
-            'last_com_port':f'{self.serial_port}',
+            'last_com_port':self.serial_port or '',
             'baud_rate':self.baud_rate,
             'trx_adresse':f'{self.trx_Adresse:02x}', # Speichern als zweistellige HEX-Zahl
             'split':self.split,
             'abfragen_pro_sekunde':self.queries_p_sec
             }
-        config['Offset'] = {'last_offset':self.offset,'last_step':self.step}
-        with open(self.configfile, 'w') as cf: # öffnen und schreiben der *.ini
+        config['Offset'] = {
+            'last_offset':self.offset,
+            'last_step':self.step,
+            'transverter_up':self.transverter['up'],
+            'transverter_down':self.transverter['down']
+            }
+        with open(self.configfile, 'w', encoding='utf-8') as cf: # öffnen und schreiben der *.ini
             cf.write( # Kommentarblock in der Datei
                 '; #==================================================#\n' \
                 '; | Konfigurationsdatei für IC-705 Split Controller  |\n' \
@@ -342,9 +356,7 @@ class CIV_GUI:
         self.fenster.resizable(False, False) # Größe des Fensters wird durch seine Inhalte bestimmt
         self.fenster.protocol('WM_DELETE_WINDOW', self._close)
         self.control = CIV_Control()
-        xy = self.control.config_einlesen()
-        self.fenster.geometry(f'+{xy}')
-        self.start_ft = False
+        xy, win_pos, on_top = self.control.config_einlesen()
         self.worker = CIV_Worker(bcd_abfrage=self.control.bcd_abfrage,
                                  write=self.control.write,
                                  trx_adr=self.control.trx_Adresse,
@@ -352,6 +364,13 @@ class CIV_GUI:
                                  offset=self.control.offset,
                                  step=self.control.step)
         self._setup_user_interface()
+        self._menu()
+        self.save_win_pos.set(win_pos)
+        self.always_on_top.set(on_top)
+        self.fenster.attributes('-topmost', on_top)
+        if xy is not None:
+            self.fenster.geometry(f'+{xy}')
+        self.start_ft = False
 
     def _close(self):
         '''Schließen / Beenden des Programms'''
@@ -363,10 +382,44 @@ class CIV_GUI:
         x = self.fenster.winfo_x()
         y = self.fenster.winfo_y()
         self.fenster.destroy()
-        self.control.config_schreiben(x, y)
+        self.control.config_schreiben(self.save_win_pos.get(), x, y, self.always_on_top.get())
+
+    def _menu(self):        
+        '''Menüleiste'''
+        self.always_on_top = tk.BooleanVar(value=False)
+        self.save_win_pos = tk.BooleanVar()
+        self.transverter = tk.BooleanVar()
+
+        self.mLeiste = tk.Menu(self.fenster)
+        self.mDatei = tk.Menu(self.mLeiste, tearoff=0)
+        self.mDatei.add_command(label='Einstellungen')
+        self.mDatei.add_separator()
+        self.mDatei.add_command(label='Beenden', command=self._close)
+
+        self.mOptionen = tk.Menu(self.mLeiste, tearoff=0)
+        self.mOptionen.add_checkbutton(label='Immer im Vordergrund', variable=self.always_on_top,
+                                       command=lambda: self.fenster.attributes('-topmost', self.always_on_top.get()))
+        self.mOptionen.add_checkbutton(label='Fensterposition Speichern', variable=self.save_win_pos)
+        self.mOptionen.add_checkbutton(label='Transvertermodus', variable=self.transverter)
+
+        self.mTRX = tk.Menu(self.mLeiste, tearoff=0)
+        self.mTRX.add_command(label='Verbinden', command=self.start_frequenz_update_thread)
+        self.mTRX.add_command(label='Tracking Start', command=self._tracking_on, state='disabled')
+        self.mTRX.add_checkbutton(label='Split on / off', variable=self.checkbu_Split_bool)
+        self.mTRX.add_command(label='TX-Leistung einstellen')
+
+        self.mHilfe = tk.Menu(self.mLeiste, tearoff=0)
+        self.mHilfe.add_command(label='Hilfe', command=self.hilfe)
+        self.mHilfe.add_separator()
+        self.mHilfe.add_command(label='Info')
+
+        self.mLeiste.add_cascade(label='Datei', menu=self.mDatei)
+        self.mLeiste.add_cascade(label='Optionen', menu=self.mOptionen)
+        self.mLeiste.add_cascade(label='TRX', menu=self.mTRX)
+        self.mLeiste.add_cascade(label='Hilfe', menu=self.mHilfe)
+        self.fenster['menu'] = self.mLeiste
 
     def _setup_user_interface(self):
-
         '''Definition der Farben im Fenster'''
         self.bg_ausgabe = "#000000" # Hintergrund Frequenzanzeige RX / TX
         self.fg_ausgabeRX = "#00ff00" # Schriftfarbe RX
@@ -377,6 +430,7 @@ class CIV_GUI:
         self.schrift = "#ffffff" # Farbe der Schrift
         self.schrift_dis = "#aaaaaa" # Farbe der Schrift
 
+        '''Theme Konfiguration für ttk'''
         style = ttk.Style()
         style.theme_use('clam')
         style.map('My.TCheckbutton',
@@ -389,6 +443,7 @@ class CIV_GUI:
 
         '''Bau der Benutzeroberfläche'''
         self.fenster.config(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
+
         '''Titelframe'''
         self.frTitel = tk.Frame(self.fenster,
                                 background=self.bg_mittel,
@@ -437,7 +492,6 @@ class CIV_GUI:
                                foreground=self.schrift)
         self.lbPorts.grid(row=0, column=0)
 
-        self.cbPorts_var = tk.StringVar()
         self.cbPorts = ttk.Combobox(self.frVerbinden,
                                     width=12,
                                     values=self.control.abfrage_Ports(),
@@ -624,19 +678,25 @@ class CIV_GUI:
     def _tracking_on(self):
         '''Aktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
         self.worker.freq_tracking = True
+        self.mTRX.entryconfig(1, label='Tracking Stop', command=self._tracking_off)
         self.buTracking.config(background="#ffdd00", text='Tracking Stop', command=self._tracking_off)
         self.refresh_lbRXTX_Anzeige() # Aktualisierung der Anzeige
 
     def _tracking_off(self):
         '''Deaktiviert das automatische Nachstellen des nicht aktiven VFO (Tracking)'''
         self.worker.freq_tracking = False
+        self.mTRX.entryconfig(1, label='Tracking Start', command=self._tracking_on)
         self.buTracking.config(background="#0000ff", text='Tracking Start', command=self._tracking_on)
 
     def _update_lbRXTX_Anzeige(self, freqrx, freqtx, refresh=False):
         '''Anzeige der Frequenzen'''
         if self.start_ft and self.control.connected:
-            mhzrx = freqrx / 1_000_000
-            mhztx = freqtx / 1_000_000 if self.control.split else mhzrx # Entscheidung welche TX-VFO-Frequenz angezeigt wird. Aktiv oder Sub
+            if self.transverter.get() and self.control.split: # Transvertermode nur bei Split
+                mhzrx = (self.control.transverter['down'] + freqrx) / 1_000_000
+                mhztx = (self.control.transverter['up'] + freqtx) / 1_000_000
+            else:
+                mhzrx = freqrx / 1_000_000
+                mhztx = freqtx / 1_000_000 if self.control.split else mhzrx # Entscheidung welche TX-VFO-Frequenz angezeigt wird. Aktiv oder Sub
             self.lbRX_Anzeige_text.set(value=f'{mhzrx:.6f} MHz')
             if self.worker.freq_tracking and freqtx is not None:
                 self.lbTX_Anzeige_text.set(value=f'{mhztx:.6f} MHz')
@@ -670,6 +730,8 @@ class CIV_GUI:
                 self.control.split = False if self.checkbu_Split_bool.get() else True
                 self.worker.set_split(False if self.control.split else True)
                 self.buVerbinden.config(text='Trennen', command=self.stop_frequenz_update_thread, background='#ff0000')
+                self.mTRX.entryconfig(0, label='Trennen', command=self.stop_frequenz_update_thread)
+                self.mTRX.entryconfig(1, state='active')
                 self.status_indikator.itemconfig(self.status_indikator_oval, fill='#00ff00')
                 self.buTracking.config(state='normal')
                 self.cbPorts.config(state='disabled')
@@ -681,12 +743,14 @@ class CIV_GUI:
         if self.worker.freq_tracking:
             self._tracking_off()
         self.start_ft = False
-        self.control.disconnect()
         self.lbTX_Anzeige_text.set(value='off') # TX-Anzeige auf 'off' schalten
         '''Einstellen der Bedienelemente'''
         self.cbPorts.config(state='readonly')
         self.buPorts_refresh.config(state='normal')
         self.buTracking.config(state='disabled')
+        self.control.disconnect()
+        self.mTRX.entryconfig(0, label='Verbinden', command=self.start_frequenz_update_thread)
+        self.mTRX.entryconfig(1, state='disabled')
         self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
         self.lbRX_Anzeige_text.set(value='off') # Anzeige auf "off" stellen
@@ -699,6 +763,7 @@ class CIV_GUI:
             s_new = int(time.time())
             delta_s = s_new - s_old
             if  delta_s >= 1 and self.control.split:
+                print(self.control.transverter.items())
                 self.worker.mode_switch() # Check ob beide VFO gleichn Mode haben
                 s_old = int(time.time())
             self.control.split = self.worker.is_split()
