@@ -492,6 +492,7 @@ class CIV_GUI:
                                foreground=self.schrift)
         self.lbPorts.grid(row=0, column=0)
 
+        self.cbPorts_var = tk.StringVar()
         self.cbPorts = ttk.Combobox(self.frVerbinden,
                                     width=12,
                                     values=self.control.abfrage_Ports(),
