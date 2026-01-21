@@ -16,6 +16,7 @@ from tkinter import messagebox
 import threading
 import configparser
 from pathlib import Path
+from tkinter import simpledialog
 
 
 version = '1.1.0'
@@ -28,10 +29,8 @@ class CIV_Control:
         Initialisiert den Controller für den IC-705.
         Setzt Standardwerte für Adressen, Frequenzen und Offset.
         '''
-        self.configfile = 'config.ini'
         self.connected = False
         self.lock = threading.Lock()
-        self.queries_p_sec = 4
         self.serial_port = None # Serielle schnittstelle (Default)
         self.baud_rate = 19200 # Default TRX-Baudrate
         self.time_out = 0.1 # Timeout beim Connect zum TRX via Pyserial
@@ -39,8 +38,7 @@ class CIV_Control:
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
         self.controller_Adresse = 0xe0 # Muss in der Regel nicht angepasst werden
         self.offset = 287_500_000 # Default Offset (QO-100)
-        self.transverter = {'up':1_968_000_000, 'down':10_345_000_000}
-        self.step = 10 # Default Schrittweite für manuelles nachjustieren
+        self.transverter = {'up':1_968_000_000, 'down':10_345_000_000} # Default bei QO-100
         self.msg_header = bytes([0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd])
         self.msg_cmd = {
             'tx_set':b'\x25\x01', # Setzen Frequenz im TRX (Nicht aktiver VFO)
@@ -55,63 +53,6 @@ class CIV_Control:
             'split_on':b'\x0f\x01' # Split on
             }
         self.split = False # Status Split
-
-    def config_einlesen(self):
-        '''Einlesen der config.ini'''
-        config = configparser.ConfigParser()
-        if Path(self.configfile).is_file():
-            config.read(self.configfile)
-            self.serial_port = config.get('Transceiver', 'last_com_port') or None
-            self.baud_rate = config.getint('Transceiver', 'baud_rate')
-            self.trx_Adresse = int(config.get('Transceiver', 'trx_adresse'), 16)
-            self.offset = config.getint('Offset', 'last_offset')
-            self.step = config.getint('Offset', 'last_step')
-            self.split = config.getboolean('Transceiver', 'split')
-            self.queries_p_sec = config.getint('Transceiver', 'abfragen_pro_sekunde')
-            xy = config.get('Allgemein', 'fensterposition', fallback=None) or None
-            save_win_pos = config.getboolean('Allgemein', 'fensterposition_speichern', fallback=False) or False
-            on_top = config.getboolean('Allgemein', 'on_top', fallback=False) or False
-            self.transverter['up'] = config.getint('Offset', 'transverter_up')
-            self.transverter['down'] = config.getint('Offset', 'transverter_down')
-            return xy, save_win_pos, on_top
-        return None, False, False
-
-    def config_schreiben(self, win_save, x, y, on_top):
-        '''Parsen und Schreiben der config.ini'''
-        config = configparser.ConfigParser()
-        config['Allgemein'] = {
-            'fensterposition_speichern':win_save,
-            'fensterposition':f'{x}+{y}' if win_save else '',
-            'on_top':on_top
-            }
-        config['Transceiver'] = {
-            'last_com_port':self.serial_port or '',
-            'baud_rate':self.baud_rate,
-            'trx_adresse':f'{self.trx_Adresse:02x}', # Speichern als zweistellige HEX-Zahl
-            'split':self.split,
-            'abfragen_pro_sekunde':self.queries_p_sec
-            }
-        config['Offset'] = {
-            'last_offset':self.offset,
-            'last_step':self.step,
-            'transverter_up':self.transverter['up'],
-            'transverter_down':self.transverter['down']
-            }
-        with open(self.configfile, 'w', encoding='utf-8') as cf: # öffnen und schreiben der *.ini
-            cf.write( # Kommentarblock in der Datei
-                '; #==================================================#\n' \
-                '; | Konfigurationsdatei für IC-705 Split Controller  |\n' \
-                '; | Autor Pascal Pfau (DH1PV)                        |\n' \
-                '; | Diese Datei wird automatisch erzeugt.            |\n' \
-                '; | Manuelle Änderungen sind möglich,                |\n' \
-                '; | geschehen auf eigene Gefahr. Sollte das Programm |\n' \
-                '; | nach Änderungen nicht mehr wie erwartet laufen,  |\n' \
-                '; | kann diese Datei gefahrlos gelöscht werden.      |\n' \
-                '; | Die Nutzung des Programms geschieht auf eigene   |\n' \
-                '; | Gefahr.                                          |\n' \
-                '; #==================================================#\n\n'
-            )
-            config.write(cf)
 
     def connect(self):
         '''Aufbau der Verbindung zum TRX über Serielle Schnittstelle'''
@@ -201,14 +142,14 @@ class CIV_Control:
 
 
 class CIV_Worker:
-    def __init__(self, bcd_abfrage, write, trx_adr, contr_adr, offset=0, step=0):
-        self.write = write
+    def __init__(self, bcd_abfrage, write):
         self.bcd_abfrage = bcd_abfrage
-        self.trx_Adresse = trx_adr
-        self.controller_Adresse = contr_adr
+        self.write = write
+        self.controller_Adresse = None
+        self.trx_Adresse = None
+        self.offset = None
+        self.step = None
         self.freq_tracking = False
-        self.offset = offset
-        self.step = step
 
     def bcd_to_freq(self, bcd:bytes):
             '''Parsen der 5 Frequenz-Bytes'''
@@ -345,6 +286,147 @@ class CIV_Worker:
         pass
 
 
+class CIV_SettingsManager:
+    def __init__(self):
+        self.configfile = 'config.ini'
+        self.fenster = None
+        self.bg_mittel = None
+
+    def einstellungen(self):
+        pass
+
+    def config_schreiben(self, allgemein, transceiver, offset):
+        '''Parsen und Schreiben der config.ini'''
+        config = configparser.ConfigParser()
+        config['ALLGEMEIN'] = allgemein
+        config['TRANSCEIVER'] = transceiver
+        config['OFFSET'] = offset
+        with open(self.configfile, 'w', encoding='utf-8') as cf: # öffnen und schreiben der *.ini
+            cf.write( # Kommentarblock in der Datei
+                '; #==================================================#\n' \
+                '; | Konfigurationsdatei für IC-705 Split Controller  |\n' \
+                '; | Autor Pascal Pfau (DH1PV)                        |\n' \
+                '; | Diese Datei wird automatisch erzeugt.            |\n' \
+                '; | Manuelle Änderungen sind möglich,                |\n' \
+                '; | geschehen auf eigene Gefahr. Sollte das Programm |\n' \
+                '; | nach Änderungen nicht mehr wie erwartet laufen,  |\n' \
+                '; | kann diese Datei gefahrlos gelöscht werden.      |\n' \
+                '; | Die Nutzung des Programms geschieht auf eigene   |\n' \
+                '; | Gefahr.                                          |\n' \
+                '; #==================================================#\n\n'
+            )
+            config.write(cf)
+
+    def config_einlesen(self):
+        '''Einlesen der config.ini'''
+        config = configparser.ConfigParser()
+        if Path(self.configfile).is_file():
+            config.read(self.configfile)
+            ausgabe = {
+                'serial_port':config.get('TRANSCEIVER', 'last_com_port') or None,
+                'baud_rate':config.getint('TRANSCEIVER', 'baud_rate'),
+                'trx_adresse':int(config.get('TRANSCEIVER', 'trx_adresse'), 16),
+                'offset':config.getint('OFFSET', 'last_offset'),
+                'step':config.getint('OFFSET', 'last_step'),
+                'split':config.getboolean('TRANSCEIVER', 'split'),
+                'queries_p_sec':config.getint('TRANSCEIVER', 'abfragen_pro_sekunde'),
+                'xy':config.get('ALLGEMEIN', 'fensterposition', fallback=None) or None,
+                'save_win_pos':config.getboolean('ALLGEMEIN', 'fensterposition_speichern', fallback=False) or False,
+                'on_top':config.getboolean('ALLGEMEIN', 'on_top', fallback=False) or False,
+                'up':config.getint('OFFSET', 'transverter_up'),
+                'down':config.getint('OFFSET', 'transverter_down')
+                }
+            return ausgabe
+        return {}
+
+    def hilfe(self):
+        '''Generierung eines Hilfe- und Infofensters'''
+        info = f'''\
+{name} v{version}
+Autor: Pascal Pfau (DH1PV)
+eMail: dh1pv@darc.de
+©2026\n
+Funktionen:
+- Frequenznachführung für Crossbandbetrieb
+- Offset-Korrektur
+- Feinabstimmung der TX-Frequenz
+- Automatische Mode-Synchronisation zwischen VFO A(B) und VFO B(A)
+- Unterstützung Splitsteuerung on / off
+- Anzeige der Tatsächlichen TX-Frequenz
+- Speicherung der Einstellungen\n
+Release Notes:
+02-01-2026 v1.0.0
+- Erste stabile Version (1.0.0)
+- Verbesserte Code-Struktur und Stabilität
+- Einführung einer Worker-Klasse
+- Bugfixes
+18-01-2026 v1.1.0
+- Unterstützung des Split-Betriebs
+- Automatische Mode-Synchronisation zwischen VFO A => VFO B
+- Synchronisationsinterval über config.ini jetzt anpassbar
+- Aktualisierung der Hilfe im Programm
+- Bugfixes und Verbesserung der Stabilität
+- CIV_Control.write() jetzt flexibler
+
+Disclaimer:
+Die Benutzung des Programms geschieht auf eigene Gefahr. Für Schäden an Geräten (Computer, TRX, etc.) \
+und Software, sowie Datenverlusten, übernehme ich keinerlei Haftung.\n
+Erste schritte:
+Nach dem Start als erstes den richtigen Seriellen Port auswählen. Meist in der Geräteverwaltung mit \
+CI-V gekennzeichnet. Danach auf Verbinden klicken. Jetzt wird die Aktuelle RX-Frequenz angezeigt. Zum \
+Nachführen der TX-Frequenz Tracking Start klicken. Nun wird auch die Aktuelle TX-Frequenz angezeigt und \
+automatisch anhand des aktuell eingestelltem Offsets gesetzt.
+Das Offset kann manuell in Herz eingegeben werden oder aber in Einzelschritten, einstellbar unter \
+Schrittweite, mit "+" und "-" werden.
+Wenn der haken bei Slit gesetzt ist schaltet sich split mit ein, wenn nicht markiert ist \
+Split im TRX off. Split kann auch direkt im TRX gesetzt werden. Eine rückmeldung erfolgt über die Checkbox.
+In der config.ini kann eingestellt werden wie oft Pro sec eine Abfrage der Frequenz vom TRX gemacht wird. \
+Standard ist 4. Mehr als 10 bei Verbindungen via Bluetooth und 25 via USB sind hier nicht sinnvoll und \
+können zu Fehlern führen.\n
+! ! ! ACHTUNG ! ! !
+Damit das Programm richtig funktioniert ist es erforderlich das sowohl 
+MENU >> Connectors >> CI-V >> CI-V USB Echo Back = OFF
+und bei Nutzung via Bluetooth
+MENU >> Bluetooth Set >> Data Device Set >> Serialport Funktion = CI-V (Echo Back OFF)
+eingestellt ist.\
+'''
+        '''Bau des Infofensters'''
+        fensterHilfe = tk.Toplevel(self.fenster, background=self.bg_mittel)
+        fensterHilfe.title('Info / Hilfe')
+        fensterHilfe.resizable(1,1)
+        fensterHilfe.transient(self.fenster)
+        fensterHilfe.grab_set()
+        fensterHilfe.rowconfigure(0, weight=1)
+        fensterHilfe.columnconfigure(0, weight=1)
+
+        frText = ttk.Frame(fensterHilfe)
+        frText.columnconfigure(0, weight=1)
+        frText.rowconfigure(0, weight=1)
+        frText.grid(row=0, column=0,  padx=5, pady=5, sticky='nsew')
+        sbText = tk.Scrollbar(frText, orient='vertical')
+        sbText.grid(row=0, column=1, sticky='ns')
+
+        text = tk.Text(frText, wrap='word', width=75, background=self.bg_mittel, foreground="#00ff00", yscrollcommand=sbText.set, font=(None,14))
+        text.rowconfigure(0, weight=1)
+        text.columnconfigure(0, weight=1)
+        text.grid(row=0, column=0, sticky='nsew')
+        text.insert(1.0, info)
+        text.config(state='disabled')
+        sbText.config(command=text.yview)
+
+        buOK = ttk.Button(fensterHilfe, text='Schließen', command=fensterHilfe.destroy)
+        buOK.grid(row=1, column=0, pady=(0, 5))
+        
+        fensterHilfe.update_idletasks()
+        screen_w = fensterHilfe.winfo_screenwidth()
+        screen_h = fensterHilfe.winfo_screenheight()
+        width = fensterHilfe.winfo_width()
+        height = fensterHilfe.winfo_height()
+        x = ((screen_w // 2) - (width // 2)) * 0.33
+        y = ((screen_h // 2) - (height // 2)) * 0.33
+        fensterHilfe.geometry(f'{width}x{height}+{round(x)}+{round(y)}')
+
+
 class CIV_GUI:
     def __init__(self):
         '''
@@ -352,37 +434,69 @@ class CIV_GUI:
         Erstellt alle UI-Elemente und startet den Controller.
         '''
         self.fenster = tk.Tk()
+        self.start_ft = False
         self.fenster.title(f'{name} - v{version}') # Name Titelleiste Fenster / Programmname
         self.fenster.resizable(False, False) # Größe des Fensters wird durch seine Inhalte bestimmt
         self.fenster.protocol('WM_DELETE_WINDOW', self._close)
+        self.sm = CIV_SettingsManager()
+        config = self.sm.config_einlesen()
+
+        '''Control'''
         self.control = CIV_Control()
-        xy, win_pos, on_top = self.control.config_einlesen()
-        self.worker = CIV_Worker(bcd_abfrage=self.control.bcd_abfrage,
-                                 write=self.control.write,
-                                 trx_adr=self.control.trx_Adresse,
-                                 contr_adr=self.control.controller_Adresse,
-                                 offset=self.control.offset,
-                                 step=self.control.step)
+        if config:
+            self.control.serial_port = config['serial_port']
+            self.control.baud_rate = config['baud_rate']
+            self.control.trx_Adresse = config['trx_adresse']
+            self.control.split =config['split']
+            self.control.transverter['up'] = config['up']
+            self.control.transverter['down'] = config['down']
+        
+        '''Worker'''
+        self.worker = CIV_Worker(bcd_abfrage=self.control.bcd_abfrage, write=self.control.write)
+        self.worker.step = config.get('step', 10)
+        self.worker.offset = config.get('offset', self.control.offset)
+        self.worker.trx_Adresse = self.control.trx_Adresse
+        self.worker.controller_Adresse = self.control.controller_Adresse
+
+        '''GUI'''
         self._setup_user_interface()
         self._menu()
-        self.save_win_pos.set(win_pos)
-        self.always_on_top.set(on_top)
-        self.fenster.attributes('-topmost', on_top)
-        if xy is not None:
-            self.fenster.geometry(f'+{xy}')
-        self.start_ft = False
+        self.sm.fenster = self.fenster
+        self.sm.bg_mittel = self.bg_mittel
+        self.queries_p_sec = config.get('queries_p_sec', 4)
+        self.save_win_pos.set(config.get('save_win_pos', False))
+        self.always_on_top.set(config.get('on_top', False))
+        self.fenster.attributes('-topmost', config.get('on_top', False)) # Festlegen ob Fenster immer im Vordergrund ist
+        if config:
+            if config['xy'] is not None:
+                self.fenster.geometry(f'+{config["xy"]}')
 
     def _close(self):
         '''Schließen / Beenden des Programms'''
         if self.start_ft:
             self.stop_frequenz_update_thread()
-        self.control.offset = self.worker.offset
-        self.control.step = self.worker.step
-        self.control.split = self.checkbu_Split_bool.get()
         x = self.fenster.winfo_x()
         y = self.fenster.winfo_y()
+        allgemein = {
+            'fensterposition_speichern':self.save_win_pos.get(),
+            'fensterposition':f'{x}+{y}' if self.save_win_pos.get() else '',
+            'on_top':self.always_on_top.get()
+            }
+        transceiver = {
+            'last_com_port':self.control.serial_port or '',
+            'baud_rate':self.control.baud_rate,
+            'trx_adresse':f'{self.control.trx_Adresse:02x}', # Speichern als zweistellige HEX-Zahl
+            'split':self.checkbu_Split_bool.get(),
+            'abfragen_pro_sekunde':self.queries_p_sec
+            }
+        offset = {
+            'last_offset':self.worker.offset,
+            'last_step':self.worker.step,
+            'transverter_up':self.control.transverter['up'],
+            'transverter_down':self.control.transverter['down']
+            }
         self.fenster.destroy()
-        self.control.config_schreiben(self.save_win_pos.get(), x, y, self.always_on_top.get())
+        self.sm.config_schreiben(allgemein, transceiver, offset)
 
     def _menu(self):        
         '''Menüleiste'''
@@ -409,7 +523,7 @@ class CIV_GUI:
         self.mTRX.add_command(label='TX-Leistung einstellen')
 
         self.mHilfe = tk.Menu(self.mLeiste, tearoff=0)
-        self.mHilfe.add_command(label='Hilfe', command=self.hilfe)
+        self.mHilfe.add_command(label='Hilfe', command=self.sm.hilfe)
         self.mHilfe.add_separator()
         self.mHilfe.add_command(label='Info')
 
@@ -472,7 +586,7 @@ class CIV_GUI:
         self.status_indikator.grid(row=0, column=0)
         self.status_indikator_oval = self.status_indikator.create_oval(0, 0, 15, 15, fill='#ff0000')
         self.buHilfe = tk.Button(self.frTitel_re,
-                                 command=self.hilfe,
+                                 command=self.sm.hilfe,
                                  text='?', 
                                  font=(None, 13, 'bold'),
                                  foreground='red',
@@ -764,7 +878,6 @@ class CIV_GUI:
             s_new = int(time.time())
             delta_s = s_new - s_old
             if  delta_s >= 1 and self.control.split:
-                print(self.control.transverter.items())
                 self.worker.mode_switch() # Check ob beide VFO gleichn Mode haben
                 s_old = int(time.time())
             self.control.split = self.worker.is_split()
@@ -786,92 +899,12 @@ class CIV_GUI:
                     else:
                         self.fenster.after(0, self._update_lbRXTX_Anzeige, freq[0], freq[1])
                     freqrx_alt = freq[0]
-                for i in range(100//self.control.queries_p_sec):
+                for i in range(100//self.queries_p_sec):
                     '''Warteschleife'''
                     if not self.start_ft or not self.control.connected: # Überprüfung auf Abbruch beim warten
                         break
                     time.sleep(0.01)
 
-    def hilfe(self):
-        '''Generierung eines Hilfe- und Infofensters'''
-        info = f'''\
-{name} v{version}
-Autor: Pascal Pfau (DH1PV)
-eMail: dh1pv@darc.de
-©2026\n
-Funktionen:
-- Frequenznachführung für Crossbandbetrieb
-- Offset-Korrektur
-- Feinabstimmung der TX-Frequenz
-- Automatische Mode-Synchronisation zwischen VFO A(B) und VFO B(A)
-- Unterstüzung Splitsteuerung on / off
-- Anzeige der Tatsächlichen TX-Frequenz
-- Speicherung der Einstellungen\n
-Release Notes:
-02-01-2026 v1.0.0
-- Erste stabile Version (1.0.0)
-- Verbesserte Code-Struktur und Stabilität
-- Einführung einer Worker-Klasse
-- Bugfixes
-18-01-2026 v1.1.0
-- Unterstützung des Split-Betriebs
-- Automatische Mode-Synchronisation zwischen VFO A => VFO B
-- Synkronisationsinterval über config.ini jetzt anpassbar
-- Aktuallisierung der Hilfe im Programm
-- Bugfixes und verbesserung der stabilität
-- CIV_Control.write() jetzt flexibler
-
-Disclaimer:
-Die Benutzung des Programms geschieht auf eigene Gefahr. Für Schäden an Geräten (Computer, TRX, etc.) \
-und Software, sowie Datenverlusten, übernehme ich keinerlei Haftung.\n
-Erste schritte:
-Nach dem Start als erstes den richtigen Seriellen Port auswählen. Meist in der Geräteverwaltung mit \
-CI-V gekennzeichnet. Danach auf Verbinden klicken. Jetzt wird die Aktuelle RX-Frequenz angezeigt. Zum \
-Nachführen der TX-Frequenz Tracking Start klicken. Nun wird auch die Aktuelle TX-Frequenz angezeigt und \
-automatisch anhand des aktuell eingestelltem Offsets gesetzt.
-Das Offset kann manuell in Herz eingegeben werden oder aber in Einzelschritten, einstellbar unter \
-Schrittweite, mit "+" und "-" werden.
-Wenn der haken bei Slit gesetzt ist schaltet sich split mit ein, wenn nicht markiert ist \
-Split im TRX off. Split kann auch direkt im TRX gesetzt werden. Eine rückmeldung efolgt über die Chechbox.
-In der config.ini kann eingestellt werden wie oft Pro sec eine Abfrage der Frequenz vom TRX gemacht wird. \
-Standart ist 4. Mehr als 10 bei verbindungn via Bluetooth und 25 via USB sind hier nicht sinnvoll und \
-können zu Fehlern führen.\n
-! ! ! ACHTUNG ! ! !
-Damit das Programm richtig funktioniert ist es erforderlich das sowohl 
-MENU >> Connectors >> CI-V >> CI-V USB Echo Back = OFF
-und bei Nutzung via Bluetooth
-MENU >> Bluetooth Set >> Data Device Set >> Serialport Funktion = CI-V (Echo Back OFF)
-eingestellt ist.\
-'''
-        '''Bau des Infofensters'''
-        fensterHilfe = tk.Toplevel(self.fenster, background=self.bg_dunkel)
-        fensterHilfe.title('Info / Hilfe')
-        fensterHilfe.resizable(0,0)
-        fensterHilfe.transient(self.fenster)
-        fensterHilfe.grab_set()
-            
-        frText = ttk.Frame(fensterHilfe)
-        frText.grid(row=0, column=0, padx=5, pady=5)
-        sbText = tk.Scrollbar(frText, orient='vertical')
-        sbText.grid(row=0, column=1, sticky='ns')
-
-        text = tk.Text(frText, wrap='word', width=75, background=self.bg_mittel, foreground="#00ff00", yscrollcommand=sbText.set, font=(None,14))
-        text.grid(row=0, column=0)
-        text.insert(1.0, info)
-        text.config(state='disabled')
-        sbText.config(command=text.yview)
-
-        buOK = ttk.Button(fensterHilfe, text='Schließen', command=fensterHilfe.destroy)
-        buOK.grid(row=1, column=0, pady=(0, 5))
-        
-        fensterHilfe.update_idletasks()
-        screen_w = fensterHilfe.winfo_screenwidth()
-        screen_h = fensterHilfe.winfo_screenheight()
-        width = fensterHilfe.winfo_width()
-        height = fensterHilfe.winfo_height()
-        x = (screen_w // 2) - (width // 2)
-        y = ((screen_h // 2) - (height // 2)) * 0.66
-        fensterHilfe.geometry(f'{width}x{height}+{x}+{round(y)}')
 
 
 if __name__ == "__main__":
