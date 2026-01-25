@@ -28,6 +28,8 @@ Die Anzeige und Logik orientieren sich dabei konsequent am tatsächlichen Verhal
 - Serielle CI-V-Kommunikation (USB / virtueller COM-Port (Bluetooth))
 - Grafische Benutzeroberfläche mit Tkinter
 - Persistente Speicherung der letzten Einstellungen in einer config.ini
+- Trayicon mit Menü
+- Transvertermode
 
 ---
 
@@ -35,7 +37,7 @@ Die Anzeige und Logik orientieren sich dabei konsequent am tatsächlichen Verhal
 
 - Python 3.x
 - Abhängigkeiten:
-  pip install pyserial
+  pip install pyserial pystray pillow
 
 ## Transceiver-Einstellungen (IC-705)
 
@@ -92,7 +94,7 @@ WLAN-Verbindung noch nicht implementiert
 
 - Linux-Implementierung
 - Speicherung der Fensterposition
-- Tray-Icon
+- Minimierung ins Tray-Icon 
 - Manuelles Setzen von RX/TX-Frequenzen
 - CI-V-Kommunikation über WLAN
 - Erweiterte Offset-Validierung

@@ -6,7 +6,7 @@
 - [ ] Hinzufügen eines Tray-Icons
 - [x] Speicherung der Fensterposition
 - [x] Speicherung der Fensterposition optional machen
-- [ ] Transverter-Modus
+- [x] Transverter-Modus
 - [ ] Anzeige TX / RX
 - [ ] Bandwahl TX / RX
 - [ ] Linux Implementierung
@@ -34,7 +34,7 @@
 >
 >
 > - <ins>Tray-Icon</ins>
->   - Verbinden / Trennen
->   - Tracking Start / Stop
->   - Split
->   - Beenden
+>   - [x] Verbinden / Trennen
+>   - [x] Tracking Start / Stop
+>   - [ ] Split
+>   - [x] Beenden
