@@ -2,7 +2,7 @@
 Icom IC-705 Split Controller
 Autor: Pascal Pfau (DH1PV)
 Benötigte Bibliotheken:
-- pip install pyserial
+- pip install pyserial pystray pillow
 Einstellungen im TRX:
 - CI-V USB Echo Back muss 'off' sein
 '''
@@ -16,7 +16,11 @@ from tkinter import messagebox
 import threading
 import configparser
 from pathlib import Path
-from tkinter import simpledialog
+from PIL import Image
+import pystray as tray
+from pystray import MenuItem
+from pystray import Menu
+
 
 
 version = '1.1.0'
@@ -427,7 +431,42 @@ eingestellt ist.\
         fensterHilfe.geometry(f'{width}x{height}+{round(x)}+{round(y)}')
 
 
-class CIV_GUI:
+class CIV_GUI_TRAY:
+    def __init__(self):
+        self.icon = {'green':Image.open('green.png'),'red':Image.open('red.png'),'yellow_green':Image.open('yellow_green.png')}
+        self.tray_icon = tray.Icon(name='TrayIcon', icon=self.icon['red'], title=name, menu=self.build_tray_menu())
+        self.tray_icon.run_detached()
+
+    def build_tray_menu(self, icon:str=None):
+        if icon is not None:
+            self.tray_icon.icon = self.icon[icon]
+        if not self.start_ft:
+            return Menu(MenuItem(text='Fenster öffnen', action=self.show_window),
+                        MenuItem(text='Verbinden', action=self.start_frequenz_update_thread),
+                        MenuItem(text='Tracking Start', action=self._tracking_on, enabled=False),
+                        MenuItem(text='Beenden', action=self.tray_close))
+        elif self.start_ft and not self.worker.freq_tracking:
+            return Menu(MenuItem(text='Fenster öffnen', action=self.show_window),
+                        MenuItem(text='Trennen', action=self.stop_frequenz_update_thread),
+                        MenuItem(text='Tracking Start', action=self._tracking_on, enabled=True),
+                        MenuItem(text='Beenden', action=self.tray_close))
+        else:
+            return Menu(MenuItem(text='Fenster öffnen', action=self.show_window),
+                        MenuItem(text='Trennen', action=self.stop_frequenz_update_thread),
+                        MenuItem(text='Tracking Stop', action=self._tracking_off, enabled=True),
+                        MenuItem(text='Beenden', action=self.tray_close))
+
+    def tray_close(self):
+        self.fenster.after(0, self._close)
+
+    def show_window(self):
+        self.fenster.deiconify()
+
+    def minimize_to_tray(self, event=None):
+        self.fenster.withdraw()
+
+
+class CIV_GUI(CIV_GUI_TRAY):
     def __init__(self):
         '''
         Initialisiert die GUI für den IC-705 Controller.
@@ -472,9 +511,10 @@ class CIV_GUI:
                 self.fenster.geometry(f'+{config["xy"]}')
 
         '''Tray Icon'''
-        self.icon = {'green':Image.open('green.png'),'red':Image.open('red.png'),'yellow_green':Image.open('yellow_green.png')}
-        self.tray_icon = tray.Icon(name='TrayIcon', icon=self.icon['red'], title=name, menu=self._build_tray_menu())
-        self.tray_icon.run_detached()
+        super().__init__()
+        self.minimizetotray = config.get('minimize_to_tray', self.sm.minimizetotray)
+        if self.minimizetotray:
+            self.fenster.bind('<Unmap>', self.minimize_to_tray)
 
     def _close(self):
         '''Schließen / Beenden des Programms'''
@@ -485,7 +525,8 @@ class CIV_GUI:
         allgemein = {
             'fensterposition_speichern':self.save_win_pos.get(),
             'fensterposition':f'{x}+{y}' if self.save_win_pos.get() else '',
-            'on_top':self.always_on_top.get()
+            'on_top':self.sm.ontop_at_start,
+            'minimize_to_tray':self.sm.minimizetotray
             }
         transceiver = {
             'last_com_port':self.control.serial_port or '',
@@ -500,8 +541,8 @@ class CIV_GUI:
             'transverter_up':self.control.transverter['up'],
             'transverter_down':self.control.transverter['down']
             }
-        self.fenster.destroy()
         self.tray_icon.stop()
+        self.fenster.destroy()
         self.sm.config_schreiben(allgemein, transceiver, offset)
 
     def _menu(self):        
@@ -539,20 +580,6 @@ class CIV_GUI:
         self.mLeiste.add_cascade(label='Hilfe', menu=self.mHilfe)
         self.fenster['menu'] = self.mLeiste
 
-    def _build_tray_menu(self):
-        if not self.start_ft:
-            return Menu(MenuItem(text='Verbinden', action=self.start_frequenz_update_thread),
-                        MenuItem(text='Tracking Start', action=self._tracking_on, enabled=False),
-                        MenuItem(text='Beenden', action=self._close))
-        elif self.start_ft and not self.worker.freq_tracking:
-            return Menu(MenuItem(text='Trennen', action=self.stop_frequenz_update_thread),
-                        MenuItem(text='Tracking Start', action=self._tracking_on, enabled=True),
-                        MenuItem(text='Beenden', action=self._close))
-        else:
-            return Menu(MenuItem(text='Trennen', action=self.stop_frequenz_update_thread),
-                        MenuItem(text='Tracking Stop', action=self._tracking_off, enabled=True),
-                        MenuItem(text='Beenden', action=self._close))
-        
     def _setup_user_interface(self):
         '''Definition der Farben im Fenster'''
         self.bg_ausgabe = "#000000" # Hintergrund Frequenzanzeige RX / TX
@@ -816,8 +843,7 @@ class CIV_GUI:
         self.mTRX.entryconfig(1, label='Tracking Stop', command=self._tracking_off)
         self.buTracking.config(background="#ffdd00", text='Tracking Stop', command=self._tracking_off)
         self.refresh_lbRXTX_Anzeige() # Aktualisierung der Anzeige
-        self.tray_icon.menu = self._build_tray_menu()
-        self.tray_icon.icon = self.icon['yellow_green']
+        self.tray_icon.menu = self.build_tray_menu('yellow_green')
         self.tray_icon.update_menu()
 
     def _tracking_off(self):
@@ -825,8 +851,7 @@ class CIV_GUI:
         self.worker.freq_tracking = False
         self.mTRX.entryconfig(1, label='Tracking Start', command=self._tracking_on)
         self.buTracking.config(background="#0000ff", text='Tracking Start', command=self._tracking_on)
-        self.tray_icon.menu = self._build_tray_menu()
-        self.tray_icon.icon = self.icon['green']
+        self.tray_icon.menu = self.build_tray_menu('green')
         self.tray_icon.update_menu()
 
     def _update_lbRXTX_Anzeige(self, freqrx, freqtx, refresh=False):
@@ -877,8 +902,7 @@ class CIV_GUI:
                 self.buTracking.config(state='normal')
                 self.cbPorts.config(state='disabled')
                 self.buPorts_refresh.config(state='disabled')
-                self.tray_icon.menu = self._build_tray_menu()
-                self.tray_icon.icon = self.icon['green']
+                self.tray_icon.menu = self.build_tray_menu('green')
                 self.tray_icon.update_menu()
                 self.ft.start() # Start des Threads
 
@@ -898,8 +922,7 @@ class CIV_GUI:
         self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
         self.lbRX_Anzeige_text.set(value='off') # Anzeige auf "off" stellen
-        self.tray_icon.menu = self._build_tray_menu()
-        self.tray_icon.icon = self.icon['red']
+        self.tray_icon.menu = self.build_tray_menu('red')
         self.tray_icon.update_menu()
 
     def frequenz_update_thread(self):
@@ -942,4 +965,3 @@ class CIV_GUI:
 if __name__ == "__main__":
     gui=CIV_GUI()
     gui.fenster.mainloop()
-    sys.exit()
