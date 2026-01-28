@@ -64,7 +64,7 @@ class CIV_Control:
             try:
                 self.ic705 = serial.Serial(port=self.serial_port, baudrate=self.baud_rate, timeout=self.time_out, write_timeout=self.write_timeout)
                 '''überprüfung ob Verbindung korrekt hergestellt worden ist und ob Gerät auch korrekt Antwortet'''
-                self.ic705.write(self._message('vfo_rx'))
+                self.ic705.write(self.message('vfo_rx'))
                 dataTest = self.ic705.read_until()
                 if len(dataTest) < 7:
                     self.ic705.close()
@@ -94,7 +94,7 @@ class CIV_Control:
             except Exception as e:
                 print(f'Fehler beim Trennen: {e}') # Kontrollausgabe
 
-    def _message(self, key, bcd:bytes=None):
+    def message(self, key, bcd:bytes=None):
         '''Erstellen der CI-V Message'''
         msg = bytearray(self.msg_header)
         cmd = self.msg_cmd[key]
@@ -108,8 +108,8 @@ class CIV_Control:
         with self.lock:
             try:
                 self.ic705.reset_input_buffer() # Löschen des Empfangspuffers
-                for k in key:
-                    msg = self._message(k)
+                for k in keys:
+                    msg = self.message(k)
                     self.ic705.write(msg) # Abfrage
                     time.sleep(0.01)
                 time.sleep(0.1)
@@ -125,8 +125,8 @@ class CIV_Control:
             with self.lock:
                 try:
                     self.ic705.reset_input_buffer()
-                    for k in key:
-                        msg += self._message(k, bcd)
+                    for k in keys:
+                        msg += self.message(k, bcd)
                     self.ic705.write(msg)
                     ok_ng = self.ic705.read_until(b'\xfd')
                     print(f'###   ***   {ok_ng}   ***   ###') # Kontrollausgabe
@@ -232,7 +232,7 @@ class CIV_Worker:
         err_freq = None
         err_bcd = None
         while freq_rx is None and err_bcd is None and err_freq is None:
-            bcd, err_bcd = self.bcd_abfrage(key=['vfo_rx', 'vfo_tx'])
+            bcd, err_bcd = self.bcd_abfrage(keys=['vfo_rx', 'vfo_tx'])
             if bcd is not None:
                 print(f'bcd_read: {bcd.hex(' ')}') # Kontrollausgabe
             if err_bcd is None:
@@ -249,8 +249,9 @@ class CIV_Worker:
 
     def mode_switch(self):
         bcd, err_bcd = self.bcd_abfrage(['mode_rx', 'mode_tx'])
-        mode, err_mode = self.bcd_to_mode(bcd)
-        if (mode[0] != mode[1]):
+        if bcd is not None:
+            mode, err_mode = self.bcd_to_mode(bcd)
+        if mode is not None and err_mode is None and (mode[0] != mode[1]):
             self.write(['mode_tx'], mode[0])
         if err_mode or err_bcd:
             msg = ''
@@ -267,6 +268,8 @@ class CIV_Worker:
         for i in range(5):
             bcd, err_bcd = self.bcd_abfrage(['is_split'])
             try:
+                if err_bcd:
+                    raise err_bcd
                 s_on = bcd.find(find_split_on)
                 s_off = bcd.find(find_split_off)
                 if bcd.find(bytes([0xfe, 0xfe, self.controller_Adresse, self.trx_Adresse, 0xfa, 0xfd])) != -1: # Fehlerhafte Antwort abfangen
@@ -277,12 +280,15 @@ class CIV_Worker:
                     return False
                 if i == 4:
                         raise Exception('Unklarer Fehler in is_split')
+            except serial.SerialTimeoutException as e:
+                print(f'Timeoutfehler in is_split: {e}')
+                return None
             except Exception as e:
                 print(f'FEHLER in is_split(): {e}')
                 return None
 
     def set_split(self, on_off):
-        key = ['split_on'] if on_off else ['split_off']      
+        key = ['split_on'] if on_off else ['split_off']
         self.write(key)
 
     def is_tx_enable(self):
@@ -932,11 +938,12 @@ class CIV_GUI(CIV_GUI_TRAY):
         while self.start_ft and self.control.connected:
             s_new = int(time.time())
             delta_s = s_new - s_old
-            if  delta_s >= 1 and self.control.split:
+            if  self.control.split is not None and delta_s >= 1 and self.control.split:
                 self.worker.mode_switch() # Check ob beide VFO gleichn Mode haben
                 s_old = int(time.time())
             self.control.split = self.worker.is_split()
-            self.fenster.after(0, lambda:self.checkbu_Split_bool.set(self.control.split))
+            if self.control.split is not None:
+                self.fenster.after(0, lambda:self.checkbu_Split_bool.set(self.control.split))
             if self.start_ft and self.control.connected:
                 freq, err = self.worker.freq_update()
             if freq is None and err is not None:
