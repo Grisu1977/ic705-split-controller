@@ -107,8 +107,22 @@ class CIV_Control:
         msg[4:4] = cmd
         return bytes(msg)
 
-    def bcd_abfrage(self, key:list):
-        '''Abfrage Binär Codierte Dezimalzahl'''
+    def bcd_abfrage(self, keys:list[str]):
+        '''
+        Abfrage Binär Codierte Dezimalzahl\n
+        erlaubte Werte: self.msg_cmd.keys()
+        'tx_set'
+        'vfo_rx'
+        'vfo_tx'
+        'tx'
+        'xfc'
+        'mode_rx'
+        'mode_tx'
+        'is_split'
+        'split_off'
+        'split_on'
+        'pwr'
+        '''
         with self.lock:
             try:
                 self.ic705.reset_input_buffer() # Löschen des Empfangspuffers
@@ -122,8 +136,22 @@ class CIV_Control:
             except Exception as e:
                 return None, e
 
-    def write(self, key, bcd=None):
-        '''schreiben von Kommandos'''
+    def write(self, keys:list[str], bcd=None):
+        '''
+        Abfrage Binär Codierte Dezimalzahl\n
+        erlaubte Werte: self.msg_cmd.keys()
+        'tx_set'
+        'vfo_rx'
+        'vfo_tx'
+        'tx'
+        'xfc'
+        'mode_rx'
+        'mode_tx'
+        'is_split'
+        'split_off'
+        'split_on'
+        'pwr'
+        '''
         msg = b''
         if self.connected:
             with self.lock:
