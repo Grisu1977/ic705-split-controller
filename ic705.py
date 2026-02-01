@@ -7,19 +7,20 @@ Einstellungen im TRX:
 - CI-V USB Echo Back muss 'off' sein
 '''
 
-import time
-import serial
-import serial.tools.list_ports
-import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox
-import threading
-import configparser
-from pathlib import Path
-from PIL import Image
-import pystray as tray
-from pystray import MenuItem
-from pystray import Menu
+import time # Zeitfunktionen
+import serial # PySerial für die serielle Kommunikation
+import serial.tools.list_ports # Für die Abfrage der aktiven Ports
+import tkinter as tk # GUI mit Tkinter
+from tkinter import ttk # Erweiterte Tkinter Widgets
+from tkinter import messagebox # Für Messageboxen
+from tkinter.simpledialog import Dialog # Für Einstellungsdialoge
+import threading # Für Threading
+import configparser # Für das Einlesen und Schreiben der INI-Datei
+from pathlib import Path # Für den Pfad zur INI-Datei
+from PIL import Image # Für Tray-Icon
+import pystray as tray # Für das Tray-Icon
+from pystray import MenuItem # Für das Tray-Menü
+from pystray import Menu # Für das Tray-Menü
 
 
 
@@ -42,8 +43,10 @@ class CIV_Control:
         self.trx_Adresse = 0xa4 # Default TRX-Adresse
         self.controller_Adresse = 0xe0 # Muss in der Regel nicht angepasst werden
         self.offset = 287_500_000 # Default Offset (QO-100)
-        self.transverter = {'up':1_968_000_000, 'down':10_345_000_000} # Default bei QO-100
-        self.msg_header = bytes([0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd])
+        self.transverter_offset = {'up':1_968_000_000, 'down':10_345_000_000} # Default bei QO-100
+        self.split = False # Status Split
+        self.tx_max = 5 # Maximale TX-Leistung in Prozent (Default 5%)
+        self.queries_p_sec = 4 # Anzahl Abfragen pro Sekunde ()
         self.msg_cmd = {
             'tx_set':b'\x25\x01', # Setzen Frequenz im TRX (Nicht aktiver VFO)
             'vfo_rx':b'\x25\x00', # Abfrage Frequenz (Aktiver VFO)
@@ -96,7 +99,8 @@ class CIV_Control:
 
     def message(self, key, bcd:bytes=None):
         '''Erstellen der CI-V Message'''
-        msg = bytearray(self.msg_header)
+        msg_header = bytes([0xfe, 0xfe, self.trx_Adresse, self.controller_Adresse, 0xfd])
+        msg = bytearray(msg_header)
         cmd = self.msg_cmd[key]
         if bcd:
             cmd += bcd
@@ -297,13 +301,39 @@ class CIV_Worker:
 
 
 class CIV_SettingsManager:
+    '''Verwaltung der Einstellungen und Dialoge'''
     def __init__(self):
         self.configfile = 'config.ini'
         self.fenster = None
         self.bg_mittel = None
+        self.transverteron_at_start = False
+        self.ontop_at_start = False
+        self.dialog_set = {}
 
-    def einstellungen(self):
-        pass
+    def config_einlesen(self):
+        '''Einlesen der config.ini'''
+        config = configparser.ConfigParser()
+        if Path(self.configfile).is_file():
+            config.read(self.configfile)
+            ausgabe = {
+                'save_win_pos':config.getboolean('ALLGEMEIN', 'fensterposition_speichern', fallback=False) or False,
+                'xy':config.get('ALLGEMEIN', 'fensterposition', fallback=None) or None,
+                'on_top':config.getboolean('ALLGEMEIN', 'on_top', fallback=False) or False,
+                'minimize_to_tray':config.getboolean('ALLGEMEIN', 'minimize_to_tray', fallback=False) or False,
+                'serial_port':config.get('TRANSCEIVER', 'last_com_port') or None,
+                'baud_rate':config.getint('TRANSCEIVER', 'baud_rate'),
+                'trx_adresse':int(config.get('TRANSCEIVER', 'trx_adresse'), 16),
+                'split':config.getboolean('TRANSCEIVER', 'split'),
+                'queries_p_sec':config.getint('TRANSCEIVER', 'abfragen_pro_sekunde'),
+                'tx_max':config.getint('TRANSCEIVER', 'tx_max'),
+                'offset':config.getint('OFFSET', 'last_offset'),
+                'step':config.getint('OFFSET', 'last_step'),
+                'up':config.getint('OFFSET', 'transverter_up'),
+                'down':config.getint('OFFSET', 'transverter_down'),
+                'transverter_on_start':config.getboolean('OFFSET', 'transverter_on_start')
+                }
+            return ausgabe
+        return {}
 
     def config_schreiben(self, allgemein, transceiver, offset):
         '''Parsen und Schreiben der config.ini'''
@@ -326,28 +356,6 @@ class CIV_SettingsManager:
                 '; #==================================================#\n\n'
             )
             config.write(cf)
-
-    def config_einlesen(self):
-        '''Einlesen der config.ini'''
-        config = configparser.ConfigParser()
-        if Path(self.configfile).is_file():
-            config.read(self.configfile)
-            ausgabe = {
-                'serial_port':config.get('TRANSCEIVER', 'last_com_port') or None,
-                'baud_rate':config.getint('TRANSCEIVER', 'baud_rate'),
-                'trx_adresse':int(config.get('TRANSCEIVER', 'trx_adresse'), 16),
-                'offset':config.getint('OFFSET', 'last_offset'),
-                'step':config.getint('OFFSET', 'last_step'),
-                'split':config.getboolean('TRANSCEIVER', 'split'),
-                'queries_p_sec':config.getint('TRANSCEIVER', 'abfragen_pro_sekunde'),
-                'xy':config.get('ALLGEMEIN', 'fensterposition', fallback=None) or None,
-                'save_win_pos':config.getboolean('ALLGEMEIN', 'fensterposition_speichern', fallback=False) or False,
-                'on_top':config.getboolean('ALLGEMEIN', 'on_top', fallback=False) or False,
-                'up':config.getint('OFFSET', 'transverter_up'),
-                'down':config.getint('OFFSET', 'transverter_down')
-                }
-            return ausgabe
-        return {}
 
     def hilfe(self):
         '''Generierung eines Hilfe- und Infofensters'''
@@ -438,10 +446,12 @@ eingestellt ist.\
 
 
 class CIV_GUI_TRAY:
+    '''Verwaltung des Tray Icons'''
     def __init__(self):
         self.icon = {'green':Image.open('green.png'),'red':Image.open('red.png'),'yellow_green':Image.open('yellow_green.png')}
         self.tray_icon = tray.Icon(name='TrayIcon', icon=self.icon['red'], title=name, menu=self.build_tray_menu())
         self.tray_icon.run_detached()
+        self.minimizetotray = False
 
     def build_tray_menu(self, icon:str=None):
         if icon is not None:
@@ -493,8 +503,9 @@ class CIV_GUI(CIV_GUI_TRAY):
             self.control.baud_rate = config['baud_rate']
             self.control.trx_Adresse = config['trx_adresse']
             self.control.split =config['split']
-            self.control.transverter['up'] = config['up']
-            self.control.transverter['down'] = config['down']
+            self.control.transverter_offset['up'] = config['up']
+            self.control.transverter_offset['down'] = config['down']
+            self.control.queries_p_sec = config['queries_p_sec']
         
         '''Worker'''
         self.worker = CIV_Worker(bcd_abfrage=self.control.bcd_abfrage, write=self.control.write)
@@ -508,17 +519,19 @@ class CIV_GUI(CIV_GUI_TRAY):
         self._menu()
         self.sm.fenster = self.fenster
         self.sm.bg_mittel = self.bg_mittel
-        self.queries_p_sec = config.get('queries_p_sec', 4)
         self.save_win_pos.set(config.get('save_win_pos', False))
-        self.always_on_top.set(config.get('on_top', False))
-        self.fenster.attributes('-topmost', config.get('on_top', False)) # Festlegen ob Fenster immer im Vordergrund ist
+        self.always_on_top.set(config.get('on_top', self.sm.ontop_at_start))
+        self.sm.ontop_at_start = self.always_on_top.get()
+        self.fenster.attributes('-topmost', self.always_on_top.get()) # Festlegen ob Fenster immer im Vordergrund ist
         if config:
             if config['xy'] is not None:
                 self.fenster.geometry(f'+{config["xy"]}')
+            self.transverter.set(config.get('transverter_on_start', self.transverter))
+        self.sm.transverteron_at_start = self.transverter.get()
 
         '''Tray Icon'''
         super().__init__()
-        self.minimizetotray = config.get('minimize_to_tray', self.sm.minimizetotray)
+        self.minimizetotray = config.get('minimize_to_tray', self.minimizetotray)
         if self.minimizetotray:
             self.fenster.bind('<Unmap>', self.minimize_to_tray)
 
@@ -532,20 +545,21 @@ class CIV_GUI(CIV_GUI_TRAY):
             'fensterposition_speichern':self.save_win_pos.get(),
             'fensterposition':f'{x}+{y}' if self.save_win_pos.get() else '',
             'on_top':self.sm.ontop_at_start,
-            'minimize_to_tray':self.sm.minimizetotray
+            'minimize_to_tray':self.minimizetotray
             }
         transceiver = {
             'last_com_port':self.control.serial_port or '',
             'baud_rate':self.control.baud_rate,
             'trx_adresse':f'{self.control.trx_Adresse:02x}', # Speichern als zweistellige HEX-Zahl
             'split':self.checkbu_Split_bool.get(),
-            'abfragen_pro_sekunde':self.queries_p_sec
+            'abfragen_pro_sekunde':self.control.queries_p_sec
             }
         offset = {
             'last_offset':self.worker.offset,
             'last_step':self.worker.step,
-            'transverter_up':self.control.transverter['up'],
-            'transverter_down':self.control.transverter['down']
+            'transverter_up':self.control.transverter_offset['up'],
+            'transverter_down':self.control.transverter_offset['down'],
+            'transverter_on_start':self.sm.transverteron_at_start
             }
         self.tray_icon.stop()
         self.fenster.destroy()
@@ -606,7 +620,6 @@ class CIV_GUI(CIV_GUI_TRAY):
                   foreground=[('active',self.schrift), ('disabled', self.schrift_dis),
                               ('selected', self.schrift), ('!selected', self.schrift)]
                               )
-
 
         '''Bau der Benutzeroberfläche'''
         self.fenster.config(background=self.bg_dunkel) # Setzen der Hintergrundfarbe
@@ -764,7 +777,6 @@ class CIV_GUI(CIV_GUI_TRAY):
                                  textvariable=self.etOffset_var)
         self.etOffset.grid(row=0, column=0, padx=5, pady=5)
         self.etOffset.bind('<Return>',self._etOffset_commit)
-        # self.etOffset.bind('<FocusOut>',self._etOffset_commit)
 
         self.buOffset_plus = tk.Button(self.frOffset_uli,
                                        command=lambda:self._etOffset_pm(1),
@@ -864,8 +876,8 @@ class CIV_GUI(CIV_GUI_TRAY):
         '''Anzeige der Frequenzen'''
         if self.start_ft and self.control.connected:
             if self.transverter.get() and self.control.split: # Transvertermode nur bei Split
-                mhzrx = (self.control.transverter['down'] + freqrx) / 1_000_000
-                mhztx = (self.control.transverter['up'] + freqtx) / 1_000_000
+                mhzrx = (self.control.transverter_offset['down'] + freqrx) / 1_000_000
+                mhztx = (self.control.transverter_offset['up'] + freqtx) / 1_000_000
             else:
                 mhzrx = freqrx / 1_000_000
                 mhztx = freqtx / 1_000_000 if self.control.split else mhzrx # Entscheidung welche TX-VFO-Frequenz angezeigt wird. Aktiv oder Sub
@@ -899,15 +911,16 @@ class CIV_GUI(CIV_GUI_TRAY):
                 self.ft = threading.Thread(target=self.frequenz_update_thread, daemon=True) 
                 self.start_ft = True
                 '''Einstellen der Bedienelemente'''
+                self.status_indikator.itemconfig(self.status_indikator_oval, fill='#00ff00')
                 self.control.split = False if self.checkbu_Split_bool.get() else True
                 self.worker.set_split(False if self.control.split else True)
+                self.buPorts_refresh.config(state='disabled')
                 self.buVerbinden.config(text='Trennen', command=self.stop_frequenz_update_thread, background='#ff0000')
+                self.buTracking.config(state='normal')
                 self.mTRX.entryconfig(0, label='Trennen', command=self.stop_frequenz_update_thread)
                 self.mTRX.entryconfig(1, state='active')
-                self.status_indikator.itemconfig(self.status_indikator_oval, fill='#00ff00')
-                self.buTracking.config(state='normal')
+                self.mTRX.entryconfig(3, state='active')
                 self.cbPorts.config(state='disabled')
-                self.buPorts_refresh.config(state='disabled')
                 self.tray_icon.menu = self.build_tray_menu('green')
                 self.tray_icon.update_menu()
                 self.ft.start() # Start des Threads
@@ -919,8 +932,10 @@ class CIV_GUI(CIV_GUI_TRAY):
         self.start_ft = False
         self.lbTX_Anzeige_text.set(value='off') # TX-Anzeige auf 'off' schalten
         '''Einstellen der Bedienelemente'''
+        self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
         self.cbPorts.config(state='readonly')
         self.buPorts_refresh.config(state='normal')
+        self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.buTracking.config(state='disabled')
         self.control.disconnect()
         self.mTRX.entryconfig(0, label='Verbinden', command=self.start_frequenz_update_thread)
@@ -961,7 +976,7 @@ class CIV_GUI(CIV_GUI_TRAY):
                     else:
                         self.fenster.after(0, self._update_lbRXTX_Anzeige, freq[0], freq[1])
                     freqrx_alt = freq[0]
-                for i in range(100//self.queries_p_sec):
+                for i in range(100//self.control.queries_p_sec):
                     '''Warteschleife'''
                     if not self.start_ft or not self.control.connected: # Überprüfung auf Abbruch beim warten
                         break
