@@ -185,10 +185,15 @@ class CIV_Worker:
 
     def freq_to_bcd(self, freq):
         '''Konvertiert Frequenz in BCD-Format (5 Bytes für 10 Ziffern)'''
-        freq = f'{freq:010d}' # Auffüllen mit Nullen
-        freq_bytes = [int(freq[i]+freq[i+1], 16) for i in range(0, len(freq)-1, 2)] # Bildung BCD-Bytes: 2 Dezimalziffern = 1 Byte
-        freq_bytes.reverse() # BCD-Bytes, niederwertige Dezimalziffern zuerst
-        return bytes(freq_bytes)
+        t = 1_000_000_000 # Teiler für die höchste Stelle
+        bcd = bytearray(5) # 5 Bytes für 10 Ziffern
+        for i in range(4, -1, -1): # Schleife für jedes Byte
+            hi = (freq // t) # Höhere 4 Bits
+            lo = (freq // (t // 10)) # Niedrigere 4 Bits
+            bcd[i] = hi << 4 | lo % 10 # BCD-Kodierung
+            freq = freq % (t // 10) # Restfrequenz
+            t = t // 100 # Teiler für die nächsten 2 Ziffern
+        return bytes(bcd)
 
     def bcd_to_mode(self, bcd:bytes):
         '''Parsing der Mode-Bytes'''
