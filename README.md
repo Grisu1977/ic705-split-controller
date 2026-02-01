@@ -28,8 +28,8 @@ Die Anzeige und Logik orientieren sich dabei konsequent am tatsächlichen Verhal
 - Serielle CI-V-Kommunikation (USB / virtueller COM-Port (Bluetooth))
 - Grafische Benutzeroberfläche mit Tkinter
 - Persistente Speicherung der letzten Einstellungen in einer config.ini
-- Trayicon mit Menü
-- Transvertermode
+- Tray-Icon mit Menü
+- Transvertermode (Nur bei Split ON)
 
 ---
 
@@ -93,8 +93,6 @@ WLAN-Verbindung noch nicht implementiert
 ## Geplante Erweiterungen
 
 - Linux-Implementierung
-- Speicherung der Fensterposition
-- Minimierung ins Tray-Icon 
 - Manuelles Setzen von RX/TX-Frequenzen
 - CI-V-Kommunikation über WLAN
 - Erweiterte Offset-Validierung
