@@ -57,9 +57,9 @@ class CIV_Control:
             'mode_tx':b'\x26\x01', # Mode + Filter (usb, lsb, cw, ...)
             'is_split':b'\x0f', # Split on / off ?
             'split_off':b'\x0f\x00', # Split off
-            'split_on':b'\x0f\x01' # Split on
+            'split_on':b'\x0f\x01', # Split on
+            'pwr':b'\x14\x0a' # Setzen der TX-Leistung
             }
-        self.split = False # Status Split
 
     def connect(self):
         '''Aufbau der Verbindung zum TRX über Serielle Schnittstelle'''
@@ -295,6 +295,15 @@ class CIV_Worker:
         key = ['split_on'] if on_off else ['split_off']
         self.write(key)
 
+    def set_tx_pwr(self, pwr:int=5):
+        '''Setzen der TX-Leistung (0 bis 100 %)'''
+        value = round(pwr * 255 / 100) # Umrechnung in 0-255
+        byte1 = value // 100 # Hunderterstelle
+        rest = (value % 100) # Zehner- und Einerstelle
+        byte2 = (rest // 10) << 4 | rest % 10 # BCD Kodierung
+        bcd = bytes([byte1, byte2]) # BCD-Bytes
+        self.write(['pwr'], bcd)
+
     def is_tx_enable(self):
         '''Abfrage TX True. Comming soon'''
         pass
@@ -444,6 +453,162 @@ eingestellt ist.\
         y = ((screen_h // 2) - (height // 2)) * 0.33
         fensterHilfe.geometry(f'{width}x{height}+{round(x)}+{round(y)}')
 
+    def tx_pwr(self, tx_max):
+        '''Generierung eines Eingabedialogs für die TX-Leistung'''
+        class TXPowerDialog(Dialog):
+            def __init__(self, parent, title=None, tx_max:int=5):
+                self.tx_max = tx_max
+                self.result = None
+                super().__init__(parent, title)
+
+            def body(self, master):
+                self.resizable(False, False)
+                tk.Label(master, text=f'TX-Leistung Einstellen').grid(column=0, row=0, columnspan=2)
+                tk.Label(master, text=f'0 bis max {self.tx_max} % :').grid(column=0, row=1)
+                self.tx_entry = tk.Entry(master, width=7)
+                self.tx_entry.grid(column=1, row=1)
+                self.tx_entry.insert(0, '')
+                return self.tx_entry
+
+            def validate(self):
+                try:
+                    tx_value = int(self.tx_entry.get())
+                    if not (0 <= tx_value <= self.tx_max):
+                        raise ValueError
+                    return True
+                except ValueError:
+                    messagebox.showerror('Fehler', f'Die TX-Leistung muss eine Zahl zwischen 0 und {self.tx_max} sein.')
+                    return False
+
+            def apply(self):
+                self.result = int(self.tx_entry.get())
+
+        self.dialog_tx = TXPowerDialog(parent=self.fenster, title='TX-Leistung einstellen', tx_max=tx_max).result
+
+    def open_settings(self):
+        '''Generierung eines Einstellungsdialogs'''
+        class SettingDialog(Dialog):
+            def __init__(self, parent, title=None, setting_values:dict=None):
+                self.setting_values = setting_values
+                self.result = None
+                super().__init__(parent, title)
+
+            def body(self, master):
+                '''Erstellen des Dialogfensters'''
+                self.resizable(False, False)
+                frame1 = tk.Frame(master)
+                frame1.columnconfigure(0, weight=1)
+                frame1.grid(column=0, row=0, sticky='ns')
+                frame2 = tk.Frame(master)
+                frame2.columnconfigure(0, weight=1)
+                frame2.grid(column=1, row=0, sticky='ns')
+                frame3 = tk.Frame(master)
+                frame3.columnconfigure(0, weight=1)
+                frame3.grid(column=2, row=0, sticky='ns')
+
+                tk.Label(frame1, text='Transceiver').grid(column=0, row=0, columnspan=2 ) 
+                tk.Label(frame1, text='TRX-Adresse:').grid(column=0, row=1)
+                tk.Label(frame1, text='Baudrate:').grid(column=0, row=2)
+                tk.Label(frame1, text='Abfragen p. sec:').grid(column=0, row=3)
+                tk.Label(frame1, text='Max TX PWR (%):').grid(column=0, row=4)
+                self.trx_adr = tk.Entry(frame1, width=7)
+                self.trx_adr.grid(column=1, row=1)
+                self.trx_adr.insert(0, self.setting_values.get('trx_adr', ''))
+                self.br = tk.Entry(frame1, width=7)
+                self.br.grid(column=1, row=2)
+                self.br.insert(0, self.setting_values.get('br', ''))
+                self.qps = tk.Entry(frame1, width=7)
+                self.qps.grid(column=1, row=3)
+                self.qps.insert(0, self.setting_values.get('abs', ''))
+                self.tx_max = tk.Entry(frame1, width=7)
+                self.tx_max.grid(column=1, row=4)
+                self.tx_max.insert(0, self.setting_values.get('tx_max', ''))
+
+                tk.Label(frame2, text='Transverter').grid(column=0, row=0, columnspan=2)
+                tk.Label(frame2, text='Immer ein\nbeim Start').grid(column=0, row=1)
+                tk.Label(frame2, text='Down:').grid(column=0, row=2)
+                tk.Label(frame2, text='Up:').grid(column=0, row=3)
+                self.transv_on_bool = tk.BooleanVar()
+                self.transverter_on = tk.Checkbutton(frame2, variable=self.transv_on_bool)
+                self.transverter_on.grid(column=1, row=1)
+                self.transv_on_bool.set(self.setting_values.get('t_on'))
+                self.td = tk.Entry(frame2, width=12)
+                self.td.grid(column=1, row=2)
+                self.td.insert(0, self.setting_values.get('down', ''))
+                self.tu = tk.Entry(frame2, width=12)
+                self.tu.grid(column=1, row=3)
+                self.tu.insert(0, self.setting_values.get('up', ''))
+
+                tk.Label(frame3, text='Allgemein').grid(column=0, row=0, columnspan=2, sticky='n')
+                tk.Label(frame3, text='Ins Tray minimieren').grid(column=0, row=1)
+                tk.Label(frame3, text='Beim Start im Vordergrund').grid(column=0, row=2)
+                self.minimize_to_tray = tk.BooleanVar()
+                self.minimize_to_tray_check = tk.Checkbutton(frame3, variable=self.minimize_to_tray)
+                self.minimize_to_tray_check.grid(column=1, row=1)
+                self.minimize_to_tray.set(self.setting_values.get('min_to_tray', False))
+                self.always_on_top = tk.BooleanVar()
+                self.always_on_top_check = tk.Checkbutton(frame3, variable=self.always_on_top)
+                self.always_on_top_check.grid(column=1, row=2)
+                self.always_on_top.set(self.setting_values.get('on_top', False))
+                return super().body(master)
+
+            def validate(self):
+                '''Validierung der Eingabewerte'''
+                try:
+                    self.trx_adresse = int(self.trx_adr.get(), 16)
+                except ValueError:
+                    messagebox.showerror('Fehler', 'TRX-Adresse muss eine Hexadezimale Zahl sein.')
+                    return False
+                if not (0x00 <= self.trx_adresse <= 0xFF):
+                    messagebox.showerror('Fehler', 'TRX-Adresse muss zwischen 00 und FF liegen.')
+                    return False
+                try:
+                    self.baudrate = int(self.br.get())
+                except ValueError:
+                    messagebox.showerror('Fehler', 'Baudrate muss eine Zahl sein.')
+                    return False
+                if not self.baudrate > 0:
+                    messagebox.showerror('Fehler', 'Baudrate muss größer als 0 sein.')
+                    return False
+                try:
+                    self.queries_p_sec = int(self.qps.get())
+                except ValueError:
+                    messagebox.showerror('Fehler', 'Abfrage pro Sekunde muss eine Zahl sein')
+                    return False
+                if not (0 < self.queries_p_sec <= 25):
+                    messagebox.showerror('Fehler', 'Abfrage pro Sekunde muss twischen\n 1 und 25 sein')
+                    return False
+                try:
+                    self.tx_max_pwr = int(self.tx_max.get())
+                except ValueError:
+                    messagebox.showerror('Fehler', 'Max TX PWR muss eine Zahl sein')
+                    return False
+                if not (0 < self.queries_p_sec <= 100):
+                    messagebox.showerror('Fehler', 'Max TX PWR muss twischen\n 1 und 100 sein')
+                    return False
+                try:
+                    self.transv_down = int(self.td.get())
+                    self.transv_up = int(self.tu.get())
+                except ValueError:
+                    messagebox.showerror('Fehler', 'Transverter-Offset muss eine Zahl sein.')
+                    return False
+                return True
+
+            def apply(self):
+                '''Speichern der Eingabewerte'''
+                self.result = {
+                    'trx_adr':self.trx_adresse,
+                    'br':self.baudrate,
+                    'abs':self.queries_p_sec,
+                    't_on':self.transv_on_bool.get(),
+                    'down':self.transv_down,
+                    'up':self.transv_up,
+                    'min_to_tray':self.minimize_to_tray.get(),
+                    'on_top':self.always_on_top.get(),
+                    'tx_max':self.tx_max_pwr
+                    }
+
+        self.dialog_set = SettingDialog(parent=self.fenster, title='Einstellungen', setting_values=self.dialog_set).result
 
 class CIV_GUI_TRAY:
     '''Verwaltung des Tray Icons'''
@@ -506,6 +671,7 @@ class CIV_GUI(CIV_GUI_TRAY):
             self.control.transverter_offset['up'] = config['up']
             self.control.transverter_offset['down'] = config['down']
             self.control.queries_p_sec = config['queries_p_sec']
+            self.control.tx_max = config['tx_max']
         
         '''Worker'''
         self.worker = CIV_Worker(bcd_abfrage=self.control.bcd_abfrage, write=self.control.write)
@@ -552,7 +718,8 @@ class CIV_GUI(CIV_GUI_TRAY):
             'baud_rate':self.control.baud_rate,
             'trx_adresse':f'{self.control.trx_Adresse:02x}', # Speichern als zweistellige HEX-Zahl
             'split':self.checkbu_Split_bool.get(),
-            'abfragen_pro_sekunde':self.control.queries_p_sec
+            'abfragen_pro_sekunde':self.control.queries_p_sec,
+            'tx_max': self.control.tx_max
             }
         offset = {
             'last_offset':self.worker.offset,
@@ -573,7 +740,7 @@ class CIV_GUI(CIV_GUI_TRAY):
 
         self.mLeiste = tk.Menu(self.fenster)
         self.mDatei = tk.Menu(self.mLeiste, tearoff=0)
-        self.mDatei.add_command(label='Einstellungen')
+        self.mDatei.add_command(label='Einstellungen', command=self._change_config)
         self.mDatei.add_separator()
         self.mDatei.add_command(label='Beenden', command=self._close)
 
@@ -586,8 +753,8 @@ class CIV_GUI(CIV_GUI_TRAY):
         self.mTRX = tk.Menu(self.mLeiste, tearoff=0)
         self.mTRX.add_command(label='Verbinden', command=self.start_frequenz_update_thread)
         self.mTRX.add_command(label='Tracking Start', command=self._tracking_on, state='disabled')
-        self.mTRX.add_checkbutton(label='Split on / off', variable=self.checkbu_Split_bool)
-        self.mTRX.add_command(label='TX-Leistung einstellen')
+        self.mTRX.add_checkbutton(label='Split on / off', variable=self.checkbu_Split_bool, command=lambda:self.worker.set_split(self.checkbu_Split_bool.get()))
+        self.mTRX.add_command(label='TX-Leistung einstellen', command=self._tx_pwr_set, state='disabled')
 
         self.mHilfe = tk.Menu(self.mLeiste, tearoff=0)
         self.mHilfe.add_command(label='Hilfe', command=self.sm.hilfe)
@@ -599,6 +766,40 @@ class CIV_GUI(CIV_GUI_TRAY):
         self.mLeiste.add_cascade(label='TRX', menu=self.mTRX)
         self.mLeiste.add_cascade(label='Hilfe', menu=self.mHilfe)
         self.fenster['menu'] = self.mLeiste
+
+    def _tx_pwr_set(self):
+        '''Dialog zum Setzen der TX-Leistung'''
+        self.sm.tx_pwr(self.control.tx_max)
+        if self.sm.dialog_tx is not None:
+            self.worker.set_tx_pwr(self.sm.dialog_tx)
+
+    def _change_config(self):
+        '''Aktualisierung der Konfiguration'''
+        self.sm.dialog_set.clear()
+        self.sm.dialog_set = {
+            'trx_adr':f'{self.control.trx_Adresse:02x}',
+            'br':f'{self.control.baud_rate}',
+            'abs':f'{self.control.queries_p_sec}',
+            't_on':self.sm.transverteron_at_start,
+            'down':f'{self.control.transverter_offset['down']}',
+            'up':f'{self.control.transverter_offset['up']}',
+            'tx_max':f'{self.control.tx_max}',
+            'min_to_tray':self.minimizetotray,
+            'on_top':self.sm.ontop_at_start
+        }
+        self.sm.open_settings()
+        if self.sm.dialog_set is not None:
+            self.worker.trx_Adresse = self.sm.dialog_set.get('trx_adr')
+            self.control.trx_Adresse = self.worker.trx_Adresse
+            self.control.baud_rate = self.sm.dialog_set.get('br')
+            self.control.queries_p_sec = self.sm.dialog_set.get('abs')
+            self.sm.transverteron_at_start = self.sm.dialog_set.get('t_on')
+            self.control.transverter_offset['down'] = self.sm.dialog_set.get('down')
+            self.control.transverter_offset['up'] = self.sm.dialog_set.get('up')
+            self.control.tx_max = self.sm.dialog_set.get('tx_max')
+            self.minimizetotray = self.sm.dialog_set.get('min_to_tray', self.minimizetotray)
+            self.fenster.bind('<Unmap>', self.minimize_to_tray) if self.minimizetotray else self.fenster.unbind('<Unmap>')
+            self.sm.ontop_at_start = self.sm.dialog_set.get('on_top', self.sm.ontop_at_start)
 
     def _setup_user_interface(self):
         '''Definition der Farben im Fenster'''
@@ -917,6 +1118,7 @@ class CIV_GUI(CIV_GUI_TRAY):
                 self.buPorts_refresh.config(state='disabled')
                 self.buVerbinden.config(text='Trennen', command=self.stop_frequenz_update_thread, background='#ff0000')
                 self.buTracking.config(state='normal')
+                self.mDatei.entryconfig(0, state='disabled')
                 self.mTRX.entryconfig(0, label='Trennen', command=self.stop_frequenz_update_thread)
                 self.mTRX.entryconfig(1, state='active')
                 self.mTRX.entryconfig(3, state='active')
@@ -938,10 +1140,10 @@ class CIV_GUI(CIV_GUI_TRAY):
         self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
         self.buTracking.config(state='disabled')
         self.control.disconnect()
+        self.mDatei.entryconfig(0, state='normal')
         self.mTRX.entryconfig(0, label='Verbinden', command=self.start_frequenz_update_thread)
         self.mTRX.entryconfig(1, state='disabled')
-        self.buVerbinden.config(text='Verbinden', command=self.start_frequenz_update_thread, background='#00ff00')
-        self.status_indikator.itemconfig(self.status_indikator_oval, fill='#ff0000')
+        self.mTRX.entryconfig(3, state='disabled')
         self.lbRX_Anzeige_text.set(value='off') # Anzeige auf "off" stellen
         self.tray_icon.menu = self.build_tray_menu('red')
         self.tray_icon.update_menu()
