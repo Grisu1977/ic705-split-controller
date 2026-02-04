@@ -24,7 +24,7 @@ from pystray import Menu # Für das Tray-Menü
 
 
 
-version = '1.1.0'
+version = '1.2.0'
 name = 'Icom IC-705 Split Controller'
 
 
@@ -285,11 +285,12 @@ class CIV_Worker:
         return None, msg
 
     def mode_switch(self):
-        bcd, err_bcd = self.bcd_abfrage(['mode_rx', 'mode_tx'])
+        '''Abfrage und Synchronisation der Modes zwischen VFO A(B) und VFO B(A)'''
+        bcd, err_bcd = self.bcd_abfrage(['mode_rx', 'mode_tx']) # Abfrage der Modes
         if bcd is not None:
             mode, err_mode = self.bcd_to_mode(bcd)
-        if mode is not None and err_mode is None and (mode[0] != mode[1]):
-            self.write(['mode_tx'], mode[0])
+        if mode is not None and err_mode is None and (mode[0] != mode[1]): # Vergleich der Modes
+            self.write(['mode_tx'], mode[0]) # Setzen des Modes im TX VFO
         if err_mode or err_bcd:
             msg = ''
             if err_bcd:
@@ -325,6 +326,7 @@ class CIV_Worker:
                 return None
 
     def set_split(self, on_off):
+        '''Setzen von Split on / off'''
         key = ['split_on'] if on_off else ['split_off']
         self.write(key)
 
