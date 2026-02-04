@@ -18,7 +18,7 @@
 - Bugfixes und verbesserung der stabilität
 - CIV_Control.write() jetzt flexibler
 
-## [1.2.0] - unreleased
+## [1.2.0] - 2026-02-04
 - Transvertermode hinzugefügt
 - Bugfixes und Verbesserungen
 - Geplante Erweiterungen im README aktualisiert

@@ -21,6 +21,7 @@ from PIL import Image # Für Tray-Icon
 import pystray as tray # Für das Tray-Icon
 from pystray import MenuItem # Für das Tray-Menü
 from pystray import Menu # Für das Tray-Menü
+import sys, os # Für Ressourcenpfade
 
 
 
@@ -648,10 +649,19 @@ eingestellt ist.\
 class CIV_GUI_TRAY:
     '''Verwaltung des Tray Icons'''
     def __init__(self):
-        self.icon = {'green':Image.open('green.png'),'red':Image.open('red.png'),'yellow_green':Image.open('yellow_green.png')}
+        '''Initialisierung des Tray Icons'''
+        self.icon = {'green':Image.open(self.resource_path('green.png')),'red':Image.open(self.resource_path('red.png')),'yellow_green':Image.open(self.resource_path('yellow_green.png'))}
         self.tray_icon = tray.Icon(name='TrayIcon', icon=self.icon['red'], title=name, menu=self.build_tray_menu())
         self.tray_icon.run_detached()
         self.minimizetotray = False
+
+    def resource_path(self, relative_path:str):
+        '''Ermitteln des Pfades für Ressourcen'''
+        try:
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath('.') # Aktueller Pfad
+        return os.path.join(base_path, relative_path) # Absoluter Pfad zur Ressource
 
     def build_tray_menu(self, icon:str=None):
         if icon is not None:
